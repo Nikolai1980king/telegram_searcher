@@ -252,6 +252,116 @@
             <div id="results" class="results"></div>
         </div>
         
+        <!-- Проверка групп для рассылки -->
+        <div class="section">
+            <h2>✅ Проверка групп для рассылки</h2>
+            <p style="color: #666; margin-bottom: 15px;">
+                Выберите Excel файл с группами для проверки доступа и возможности отправки сообщений
+            </p>
+            
+            <div style="margin-bottom: 15px;">
+                <label for="groupsFileSelect" style="display: block; margin-bottom: 8px; font-weight: bold;">
+                    Выберите файл с группами:
+                </label>
+                <select id="groupsFileSelect" style="width: 100%; padding: 10px; font-size: 14px; border: 1px solid #ddd; border-radius: 4px;">
+                    <option value="">-- Выберите файл --</option>
+                </select>
+            </div>
+            
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <button id="checkGroupsBtn" class="success" onclick="startGroupsCheck()" style="flex: 1; padding: 15px; font-size: 16px;">
+                    🔍 Начать проверку групп
+                </button>
+                <button id="stopCheckBtn" class="danger" onclick="stopGroupsCheck()" style="flex: 1; padding: 15px; font-size: 16px;" disabled>
+                    ⏹ Остановить проверку
+                </button>
+            </div>
+            
+            <div id="checkProgress" style="display: none; margin-top: 15px;">
+                <div style="background: #f0f0f0; border-radius: 4px; padding: 10px; margin-bottom: 10px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                        <span>Прогресс:</span>
+                        <span id="checkProgressText">0 / 0</span>
+                    </div>
+                    <div style="background: #ddd; border-radius: 4px; height: 20px; overflow: hidden;">
+                        <div id="checkProgressBar" style="background: #4CAF50; height: 100%; width: 0%; transition: width 0.3s;"></div>
+                    </div>
+                </div>
+                <div id="checkStatus" style="color: #666; font-size: 14px;"></div>
+            </div>
+            
+            <div id="checkResults" style="margin-top: 15px; display: none;">
+                <h3>📊 Результаты проверки:</h3>
+                <div id="checkResultsContent" style="background: #f9f9f9; padding: 15px; border-radius: 4px; margin-top: 10px;"></div>
+            </div>
+        </div>
+        
+        <!-- Обработка pending групп -->
+        <div class="section">
+            <h2>🔄 Обработка pending групп</h2>
+            <p style="color: #666; margin-bottom: 15px;">
+                Автоматически попытается вступить в группы из списка pending (нажмет кнопку "Присоединиться" автоматически)
+            </p>
+            
+            <div style="margin-bottom: 15px;">
+                <label for="pendingFileSelect" style="display: block; margin-bottom: 8px; font-weight: bold;">
+                    Выберите файл с pending группами:
+                </label>
+                <select id="pendingFileSelect" style="width: 100%; padding: 10px; font-size: 14px; border: 1px solid #ddd; border-radius: 4px;">
+                    <option value="">-- Выберите файл --</option>
+                </select>
+            </div>
+            
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <button id="processPendingBtn" class="success" onclick="startPendingProcessing()" style="flex: 1; padding: 15px; font-size: 16px;">
+                    🔄 Обработать pending группы
+                </button>
+                <button id="stopPendingBtn" class="danger" onclick="stopPendingProcessing()" style="flex: 1; padding: 15px; font-size: 16px;" disabled>
+                    ⏹ Остановить обработку
+                </button>
+            </div>
+            
+            <div id="pendingProgress" style="display: none; margin-top: 15px;">
+                <div style="background: #f0f0f0; border-radius: 4px; padding: 10px; margin-bottom: 10px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                        <span>Прогресс:</span>
+                        <span id="pendingProgressText">0 / 0</span>
+                    </div>
+                    <div style="background: #ddd; border-radius: 4px; height: 20px; overflow: hidden;">
+                        <div id="pendingProgressBar" style="background: #FF9800; height: 100%; width: 0%; transition: width 0.3s;"></div>
+                    </div>
+                </div>
+                <div id="pendingStatus" style="color: #666; font-size: 14px;"></div>
+            </div>
+            
+            <div id="pendingResults" style="margin-top: 15px; display: none;">
+                <h3>📊 Результаты обработки:</h3>
+                <div id="pendingResultsContent" style="background: #f9f9f9; padding: 15px; border-radius: 4px; margin-top: 10px;"></div>
+            </div>
+        </div>
+        
+        <!-- Объединение готовых групп -->
+        <div class="section">
+            <h2>📋 Объединение готовых групп</h2>
+            <p style="color: #666; margin-bottom: 15px;">
+                Объединить все файлы ready_groups в один финальный файл для рассылки сообщений
+            </p>
+            
+            <button id="mergeReadyBtn" class="success" onclick="mergeReadyGroups()" style="width: 100%; padding: 15px; font-size: 16px; margin-bottom: 15px;">
+                📋 Объединить все ready_groups в один файл
+            </button>
+            
+            <div id="mergeProgress" style="display: none; margin-top: 15px;">
+                <div style="background: #f0f0f0; border-radius: 4px; padding: 10px;">
+                    <div id="mergeStatus" style="color: #666; font-size: 14px;">Обработка...</div>
+                </div>
+            </div>
+            
+            <div id="mergeResults" style="margin-top: 15px; display: none;">
+                <div id="mergeResultsContent" style="background: #e8f5e9; padding: 15px; border-radius: 4px; margin-top: 10px;"></div>
+            </div>
+        </div>
+        
         <!-- Файлы результатов -->
         <div class="section">
             <h2>📁 Файлы результатов</h2>
@@ -682,7 +792,364 @@
                             <button onclick="downloadFile('${f.name}')">Скачать</button>
                         </div>
                     `).join('');
+                    
+                    // Обновляем список файлов для выбора групп
+                    const select = document.getElementById('groupsFileSelect');
+                    const groupsFiles = data.files.filter(f => f.name.includes('groups') && f.name.endsWith('.xlsx') && !f.name.includes('pending') && !f.name.includes('ready'));
+                    select.innerHTML = '<option value="">-- Выберите файл --</option>' + 
+                        groupsFiles.map(f => `<option value="${f.name}">${f.name}</option>`).join('');
+                    
+                    // Обновляем список файлов для выбора pending групп
+                    const pendingSelect = document.getElementById('pendingFileSelect');
+                    const pendingFiles = data.files.filter(f => f.name.includes('pending') && f.name.endsWith('.xlsx'));
+                    pendingSelect.innerHTML = '<option value="">-- Выберите файл --</option>' + 
+                        pendingFiles.map(f => `<option value="${f.name}">${f.name}</option>`).join('');
                 });
+        }
+        
+        let checkGroupsInterval = null;
+        let checkStopFlag = false;
+        
+        function startGroupsCheck() {
+            const filename = document.getElementById('groupsFileSelect').value;
+            if (!filename) {
+                alert('⚠️ Выберите файл с группами!');
+                return;
+            }
+            
+            if (!filename.includes('groups')) {
+                alert('⚠️ Выберите файл с группами (должен содержать "groups" в названии)!');
+                return;
+            }
+            
+            checkStopFlag = false;
+            document.getElementById('checkGroupsBtn').disabled = true;
+            document.getElementById('stopCheckBtn').disabled = false;
+            document.getElementById('checkProgress').style.display = 'block';
+            document.getElementById('checkResults').style.display = 'none';
+            
+            fetch('/api/check_groups', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({filename: filename})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    startCheckStatusPolling();
+                } else {
+                    alert('Ошибка: ' + (data.message || 'Неизвестная ошибка'));
+                    resetCheckButtons();
+                }
+            })
+            .catch(err => {
+                console.error('Ошибка:', err);
+                alert('Ошибка при запуске проверки: ' + err.message);
+                resetCheckButtons();
+            });
+        }
+        
+        function stopGroupsCheck() {
+            if (confirm('Вы уверены, что хотите остановить проверку?')) {
+                checkStopFlag = true;
+                fetch('/api/stop_check_groups', {method: 'POST'})
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            document.getElementById('checkStatus').textContent = 'Остановка проверки...';
+                        }
+                    });
+            }
+        }
+        
+        function resetCheckButtons() {
+            document.getElementById('checkGroupsBtn').disabled = false;
+            document.getElementById('stopCheckBtn').disabled = true;
+        }
+        
+        function startCheckStatusPolling() {
+            if (checkGroupsInterval) clearInterval(checkGroupsInterval);
+            
+            checkGroupsInterval = setInterval(() => {
+                if (checkStopFlag) {
+                    clearInterval(checkGroupsInterval);
+                    return;
+                }
+                
+                fetch('/api/check_groups_status')
+                    .then(r => r.json())
+                    .then(data => {
+                        updateCheckProgress(data);
+                        
+                        if (data.status === 'completed' || data.status === 'error' || data.status === 'stopped') {
+                            clearInterval(checkGroupsInterval);
+                            resetCheckButtons();
+                            if (data.status === 'completed') {
+                                document.getElementById('checkResults').style.display = 'block';
+                                
+                                let resultsHTML = `
+                                    <p><strong>✅ Проверка завершена!</strong></p>
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px;">
+                                        <div style="background: #e8f5e9; padding: 15px; border-radius: 4px;">
+                                            <h4 style="margin-top: 0; color: #2e7d32;">✅ Готовые к рассылке</h4>
+                                            <p style="font-size: 24px; font-weight: bold; color: #2e7d32; margin: 10px 0;">${data.ready_count || 0}</p>
+                                `;
+                                
+                                if (data.ready_file) {
+                                    resultsHTML += `
+                                            <button onclick="downloadFile('${data.ready_file}')" class="success" style="width: 100%; padding: 10px; margin-top: 10px;">
+                                                📥 Скачать готовые группы
+                                            </button>
+                                    `;
+                                } else {
+                                    resultsHTML += `<p style="color: #999; font-size: 12px;">Нет готовых групп</p>`;
+                                }
+                                
+                                resultsHTML += `
+                                        </div>
+                                        <div style="background: #fff3e0; padding: 15px; border-radius: 4px;">
+                                            <h4 style="margin-top: 0; color: #e65100;">⏳ Требуют действий</h4>
+                                            <p style="font-size: 24px; font-weight: bold; color: #e65100; margin: 10px 0;">${(data.pending_count || 0) + (data.unavailable_count || 0)}</p>
+                                `;
+                                
+                                if (data.pending_file) {
+                                    resultsHTML += `
+                                            <button onclick="downloadFile('${data.pending_file}')" class="danger" style="width: 100%; padding: 10px; margin-top: 10px; background: #ff9800;">
+                                                📥 Скачать группы в процессе
+                                            </button>
+                                    `;
+                                } else {
+                                    resultsHTML += `<p style="color: #999; font-size: 12px;">Нет групп в процессе</p>`;
+                                }
+                                
+                                resultsHTML += `
+                                        </div>
+                                    </div>
+                                `;
+                                
+                                document.getElementById('checkResultsContent').innerHTML = resultsHTML;
+                                loadFiles();
+                            }
+                        }
+                    });
+            }, 2000); // Проверяем каждые 2 секунды
+        }
+        
+        function updateCheckProgress(data) {
+            const progressBar = document.getElementById('checkProgressBar');
+            const progressText = document.getElementById('checkProgressText');
+            const statusDiv = document.getElementById('checkStatus');
+            
+            if (data.total && data.current !== undefined) {
+                const percent = Math.round((data.current / data.total) * 100);
+                progressBar.style.width = percent + '%';
+                progressText.textContent = `${data.current} / ${data.total} (${percent}%)`;
+            }
+            
+            if (data.message) {
+                statusDiv.textContent = data.message;
+            }
+            
+            if (data.current_group) {
+                statusDiv.textContent = `Проверяю: ${data.current_group}`;
+            }
+        }
+        
+        let pendingInterval = null;
+        let pendingStopFlag = false;
+        
+        function startPendingProcessing() {
+            const filename = document.getElementById('pendingFileSelect').value;
+            if (!filename) {
+                alert('⚠️ Выберите файл с pending группами!');
+                return;
+            }
+            
+            if (!filename.includes('pending')) {
+                alert('⚠️ Выберите файл с pending группами (должен содержать "pending" в названии)!');
+                return;
+            }
+            
+            pendingStopFlag = false;
+            document.getElementById('processPendingBtn').disabled = true;
+            document.getElementById('stopPendingBtn').disabled = false;
+            document.getElementById('pendingProgress').style.display = 'block';
+            document.getElementById('pendingResults').style.display = 'none';
+            
+            fetch('/api/process_pending_groups', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({filename: filename})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    startPendingStatusPolling();
+                } else {
+                    alert('Ошибка: ' + (data.message || 'Неизвестная ошибка'));
+                    resetPendingButtons();
+                }
+            })
+            .catch(err => {
+                console.error('Ошибка:', err);
+                alert('Ошибка при запуске обработки: ' + err.message);
+                resetPendingButtons();
+            });
+        }
+        
+        function stopPendingProcessing() {
+            if (confirm('Вы уверены, что хотите остановить обработку?')) {
+                pendingStopFlag = true;
+                fetch('/api/stop_process_pending', {method: 'POST'})
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            document.getElementById('pendingStatus').textContent = 'Остановка обработки...';
+                        }
+                    });
+            }
+        }
+        
+        function resetPendingButtons() {
+            document.getElementById('processPendingBtn').disabled = false;
+            document.getElementById('stopPendingBtn').disabled = true;
+        }
+        
+        function startPendingStatusPolling() {
+            if (pendingInterval) clearInterval(pendingInterval);
+            
+            pendingInterval = setInterval(() => {
+                if (pendingStopFlag) {
+                    clearInterval(pendingInterval);
+                    return;
+                }
+                
+                fetch('/api/process_pending_status')
+                    .then(r => r.json())
+                    .then(data => {
+                        updatePendingProgress(data);
+                        
+                        if (data.status === 'completed' || data.status === 'error' || data.status === 'stopped') {
+                            clearInterval(pendingInterval);
+                            resetPendingButtons();
+                            if (data.status === 'completed') {
+                                document.getElementById('pendingResults').style.display = 'block';
+                                
+                                let resultsHTML = `
+                                    <p><strong>✅ Обработка завершена!</strong></p>
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px;">
+                                        <div style="background: #e8f5e9; padding: 15px; border-radius: 4px;">
+                                            <h4 style="margin-top: 0; color: #2e7d32;">✅ Новые готовые группы</h4>
+                                            <p style="font-size: 24px; font-weight: bold; color: #2e7d32; margin: 10px 0;">${data.new_ready_count || 0}</p>
+                                `;
+                                
+                                if (data.new_ready_file) {
+                                    resultsHTML += `
+                                            <button onclick="downloadFile('${data.new_ready_file}')" class="success" style="width: 100%; padding: 10px; margin-top: 10px;">
+                                                📥 Скачать новые готовые группы
+                                            </button>
+                                    `;
+                                } else {
+                                    resultsHTML += `<p style="color: #999; font-size: 12px;">Нет новых готовых групп</p>`;
+                                }
+                                
+                                resultsHTML += `
+                                        </div>
+                                        <div style="background: #fff3e0; padding: 15px; border-radius: 4px;">
+                                            <h4 style="margin-top: 0; color: #e65100;">⏳ Все еще pending</h4>
+                                            <p style="font-size: 24px; font-weight: bold; color: #e65100; margin: 10px 0;">${data.still_pending_count || 0}</p>
+                                `;
+                                
+                                if (data.updated_pending_file) {
+                                    resultsHTML += `
+                                            <button onclick="downloadFile('${data.updated_pending_file}')" class="danger" style="width: 100%; padding: 10px; margin-top: 10px; background: #ff9800;">
+                                                📥 Скачать обновленный pending
+                                            </button>
+                                    `;
+                                } else {
+                                    resultsHTML += `<p style="color: #999; font-size: 12px;">Нет pending групп</p>`;
+                                }
+                                
+                                resultsHTML += `
+                                        </div>
+                                    </div>
+                                `;
+                                
+                                document.getElementById('pendingResultsContent').innerHTML = resultsHTML;
+                                loadFiles();
+                            }
+                        }
+                    });
+            }, 2000); // Проверяем каждые 2 секунды
+        }
+        
+        function updatePendingProgress(data) {
+            const progressBar = document.getElementById('pendingProgressBar');
+            const progressText = document.getElementById('pendingProgressText');
+            const statusDiv = document.getElementById('pendingStatus');
+            
+            if (data.total && data.current !== undefined) {
+                const percent = Math.round((data.current / data.total) * 100);
+                progressBar.style.width = percent + '%';
+                progressText.textContent = `${data.current} / ${data.total} (${percent}%)`;
+            }
+            
+            if (data.message) {
+                statusDiv.textContent = data.message;
+            }
+            
+            if (data.current_group) {
+                statusDiv.textContent = `Обрабатываю: ${data.current_group}`;
+            }
+        }
+        
+        function mergeReadyGroups() {
+            console.log('📋 Объединение всех ready_groups файлов...');
+            
+            const btn = document.getElementById('mergeReadyBtn');
+            const progressDiv = document.getElementById('mergeProgress');
+            const resultsDiv = document.getElementById('mergeResults');
+            
+            btn.disabled = true;
+            btn.textContent = '⏳ Обработка...';
+            progressDiv.style.display = 'block';
+            resultsDiv.style.display = 'none';
+            document.getElementById('mergeStatus').textContent = 'Поиск и объединение файлов ready_groups...';
+            
+            fetch('/api/merge_ready_groups', {
+                method: 'POST'
+            })
+            .then(r => r.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.textContent = '📋 Объединить все ready_groups в один файл';
+                progressDiv.style.display = 'none';
+                
+                if (data.success) {
+                    resultsDiv.style.display = 'block';
+                    document.getElementById('mergeResultsContent').innerHTML = `
+                        <p><strong>✅ Файлы успешно объединены!</strong></p>
+                        <p>Объединено файлов: <strong>${data.files_count || 0}</strong></p>
+                        <p>Всего групп в файле: <strong>${data.total_groups || 0}</strong></p>
+                        <p style="margin-top: 15px;">
+                            <button onclick="downloadFile('${data.result_file}')" class="success" style="padding: 15px 30px; font-size: 16px;">
+                                📥 Скачать объединенный файл: ${data.result_file}
+                            </button>
+                        </p>
+                    `;
+                    loadFiles();
+                } else {
+                    alert('Ошибка: ' + (data.message || 'Неизвестная ошибка'));
+                    console.error('Ошибка объединения:', data);
+                }
+            })
+            .catch(err => {
+                btn.disabled = false;
+                btn.textContent = '📋 Объединить все ready_groups в один файл';
+                progressDiv.style.display = 'none';
+                console.error('Ошибка:', err);
+                alert('Ошибка при объединении файлов: ' + err.message);
+            });
         }
         
         // Enter для добавления

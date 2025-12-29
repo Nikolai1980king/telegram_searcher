@@ -10,10 +10,12 @@ from typing import List, Dict, Set
 from telethon import TelegramClient
 from telethon.tl.types import Channel, Chat
 from telethon.tl.functions.contacts import SearchRequest
-from telethon.tl.functions.channels import GetFullChannelRequest
-from telethon.tl.functions.messages import GetFullChatRequest
+from telethon.tl.functions.channels import GetFullChannelRequest, JoinChannelRequest, GetParticipantRequest, GetForumTopicsRequest
+from telethon.tl.functions.messages import GetFullChatRequest, ImportChatInviteRequest
+from telethon.tl.types import ChannelParticipantSelf, Channel, Chat
+from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError, InviteHashExpiredError, UserBannedInChannelError, FloodWaitError, UserNotParticipantError
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 
 
@@ -476,6 +478,774 @@ class TelegramSearcher:
         """Отключение от Telegram"""
         await self.client.disconnect()
         print("👋 Отключено от Telegram")
+    
+    @staticmethod
+    def read_groups_from_excel(filename: str) -> List[Dict]:
+        """
+        Чтение групп из Excel файла (поддерживает разные форматы: обычные группы и ready_groups)
+        
+        Args:
+            filename: Путь к Excel файлу
+            
+        Returns:
+            Список словарей с информацией о группах
+        """
+        groups = []
+        try:
+            wb = load_workbook(filename)
+            ws = wb.active
+            
+            # Определяем формат файла по заголовкам
+            headers = [cell.value for cell in ws[1]]
+            is_ready_format = 'Статус' in headers or 'Сообщение' in headers
+            
+            # Пропускаем заголовок (первая строка)
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if not row[0]:  # Пропускаем пустые строки
+                    continue
+                
+                if is_ready_format:
+                    # Формат ready_groups: ID, Название, Username, Участников, Статус, Сообщение, Действие, Ключевое слово, Родительская группа
+                    group_info = {
+                        'id': int(row[0]) if row[0] and str(row[0]) != 'N/A' else None,
+                        'title': str(row[1]) if row[1] else 'N/A',
+                        'username': str(row[2]) if row[2] and str(row[2]) != 'N/A' else None,
+                        'members_count': row[3] if len(row) > 3 and row[3] != 'N/A' else None,
+                        'keyword': row[7] if len(row) > 7 else (row[4] if len(row) > 4 else None),
+                        'check_status': 'ready',  # Все группы в ready_groups готовы
+                        'check_message': str(row[5]) if len(row) > 5 else 'Готово к рассылке',
+                        'check_action': str(row[6]) if len(row) > 6 else 'none',
+                        'parent_group': str(row[8]) if len(row) > 8 and row[8] != 'N/A' else None
+                    }
+                else:
+                    # Обычный формат: ID, Название, Username, Количество участников, Ключевое слово
+                    group_info = {
+                        'id': int(row[0]) if row[0] else None,
+                        'title': str(row[1]) if row[1] else 'N/A',
+                        'username': str(row[2]) if row[2] and str(row[2]) != 'N/A' else None,
+                        'members_count': row[3] if len(row) > 3 else None,
+                        'keyword': row[4] if len(row) > 4 else None
+                    }
+                
+                groups.append(group_info)
+        except Exception as e:
+            print(f"❌ Ошибка чтения файла {filename}: {e}")
+        
+        return groups
+    
+    async def check_group_access(self, group_info: Dict, stop_event=None) -> Dict:
+        """
+        Проверка доступа к группе и возможности отправки сообщений
+        
+        Args:
+            group_info: Словарь с информацией о группе (id, title, username)
+            stop_event: threading.Event для остановки проверки
+            
+        Returns:
+            Словарь с результатами проверки:
+            {
+                'status': 'ready'/'pending'/'unavailable'/'error',
+                'message': 'Описание статуса',
+                'action_taken': 'joined'/'request_sent'/'none'
+            }
+        """
+        if stop_event and stop_event.is_set():
+            return {'status': 'stopped', 'message': 'Проверка остановлена'}
+        
+        group_id = group_info.get('id')
+        username = group_info.get('username')
+        title = group_info.get('title', 'Unknown')
+        
+        try:
+            # Пытаемся получить информацию о группе
+            entity = None
+            
+            if username:
+                try:
+                    entity = await self.client.get_entity(username)
+                except (UsernameInvalidError, UsernameNotOccupiedError):
+                    # Username недействителен или не существует
+                    return {
+                        'status': 'unavailable',
+                        'message': f'Группа недоступна (неверный username)',
+                        'action_taken': 'none'
+                    }
+            elif group_id:
+                try:
+                    entity = await self.client.get_entity(group_id)
+                except Exception as e:
+                    return {
+                        'status': 'unavailable',
+                        'message': f'Группа недоступна: {str(e)}',
+                        'action_taken': 'none'
+                    }
+            else:
+                return {
+                    'status': 'unavailable',
+                    'message': 'Нет ID или username для группы',
+                    'action_taken': 'none'
+                }
+            
+            if not entity:
+                return {
+                    'status': 'unavailable',
+                    'message': 'Не удалось получить информацию о группе',
+                    'action_taken': 'none'
+                }
+            
+            # Инициализируем action_taken
+            action_taken = 'none'
+            
+            # ВСЕГДА проверяем участника строгим методом
+            is_member = await self._check_membership_strict(entity, title)
+            
+            # Если не участник - ВСЕГДА пытаемся вступить
+            if not is_member:
+                print(f"🔍 [{title}] Пользователь НЕ является участником, пытаюсь вступить...")
+                action_taken = await self._join_group(entity, username, title)
+                print(f"📝 [{title}] Результат вступления: {action_taken}")
+                
+                if action_taken == 'joined':
+                    # Проверяем еще раз после вступления строгим методом
+                    await asyncio.sleep(3)  # Увеличиваем задержку для синхронизации
+                    is_member = await self._check_membership_strict(entity, title)
+                    print(f"✅ [{title}] Проверка после вступления: is_member={is_member}")
+                
+                # Если все еще не участник после попытки вступления
+                if not is_member:
+                    return {
+                        'status': 'pending',
+                        'message': f'Требуется вступление в группу (запрос отправлен или требуется одобрение)',
+                        'action_taken': action_taken
+                    }
+            else:
+                print(f"✅ [{title}] Пользователь УЖЕ является участником группы")
+            
+            # Проверяем возможность отправки сообщений
+            if is_member:
+                try:
+                    # Пытаемся получить права на отправку сообщений
+                    if isinstance(entity, Channel):
+                        full_info = await self.client(GetFullChannelRequest(entity))
+                        # Проверяем, можем ли отправлять сообщения
+                        can_send = not getattr(full_info.full_chat, 'default_banned_rights', None) or \
+                                  not getattr(full_info.full_chat.default_banned_rights, 'send_messages', False)
+                    else:
+                        full_info = await self.client(GetFullChatRequest(entity.id))
+                        can_send = True  # Для обычных чатов обычно можно
+                    
+                    if can_send:
+                        return {
+                            'status': 'ready',
+                            'message': 'Готово к рассылке',
+                            'action_taken': action_taken
+                        }
+                    else:
+                        return {
+                            'status': 'pending',
+                            'message': 'В группе, но нет прав на отправку сообщений',
+                            'action_taken': action_taken
+                        }
+                except Exception as e:
+                    # Если не можем проверить права, но мы в группе, считаем готовой
+                    return {
+                        'status': 'ready',
+                        'message': 'В группе (права не проверены)',
+                        'action_taken': action_taken
+                    }
+            
+        except FloodWaitError as e:
+            wait_time = e.seconds
+            return {
+                'status': 'error',
+                'message': f'Flood wait: нужно подождать {wait_time} секунд',
+                'action_taken': 'none'
+            }
+        except Exception as e:
+            return {
+                'status': 'error',
+                'message': f'Ошибка: {str(e)}',
+                'action_taken': 'none'
+            }
+        
+        return {
+            'status': 'unavailable',
+            'message': 'Не удалось определить статус',
+            'action_taken': 'none'
+        }
+    
+    async def _check_membership_strict(self, entity, title="") -> bool:
+        """
+        СТРОГАЯ проверка, является ли пользователь участником группы/канала
+        Использует несколько методов для надежности
+        
+        Returns:
+            True если участник, False если нет
+        """
+        try:
+            me = await self.client.get_me()
+            
+            # Метод 1: Для каналов - проверяем через GetParticipantRequest (самый надежный)
+            if isinstance(entity, Channel):
+                try:
+                    participant = await self.client(GetParticipantRequest(entity, me))
+                    # Если получили информацию о себе как участнике - мы участники
+                    if isinstance(participant.participant, ChannelParticipantSelf):
+                        print(f"✅ [{title}] Проверка через GetParticipantRequest: УЧАСТНИК")
+                        return True
+                    else:
+                        print(f"❌ [{title}] Проверка через GetParticipantRequest: НЕ участник")
+                        return False
+                except UserNotParticipantError:
+                    print(f"❌ [{title}] UserNotParticipantError: НЕ участник")
+                    return False
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if 'not a member' in error_msg or 'not participant' in error_msg or 'user not found' in error_msg:
+                        print(f"❌ [{title}] Ошибка указывает на отсутствие: НЕ участник")
+                        return False
+                    # Если другая ошибка, пробуем другие методы
+                    print(f"⚠️ [{title}] GetParticipantRequest ошибка: {e}, пробую другие методы...")
+            
+            # Метод 2: Проверяем через iter_participants (ищем себя в списке)
+            try:
+                found_self = False
+                async for user in self.client.iter_participants(entity, limit=200):
+                    if user.id == me.id:
+                        found_self = True
+                        break
+                if found_self:
+                    print(f"✅ [{title}] Найден в списке участников через iter_participants: УЧАСТНИК")
+                    return True
+                else:
+                    print(f"❌ [{title}] НЕ найден в списке участников через iter_participants: НЕ участник")
+                    return False
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'not a member' in error_msg or 'not participant' in error_msg:
+                    print(f"❌ [{title}] iter_participants ошибка: НЕ участник")
+                    return False
+                print(f"⚠️ [{title}] iter_participants ошибка: {e}")
+            
+            # Метод 3: Для каналов - проверяем через GetFullChannelRequest (может не работать для не-участников)
+            if isinstance(entity, Channel):
+                try:
+                    full_info = await self.client(GetFullChannelRequest(entity))
+                    # Если получили без ошибок, но не уверены - проверяем через диалоги
+                    # Проверяем, есть ли эта группа в наших диалогах
+                    async for dialog in self.client.iter_dialogs():
+                        if dialog.entity.id == entity.id:
+                            print(f"✅ [{title}] Найдена в диалогах: УЧАСТНИК")
+                            return True
+                    print(f"❌ [{title}] НЕ найдена в диалогах: НЕ участник")
+                    return False
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if 'not a member' in error_msg or 'not participant' in error_msg:
+                        print(f"❌ [{title}] GetFullChannelRequest ошибка: НЕ участник")
+                        return False
+            
+            # Метод 4: Для обычных чатов
+            else:
+                try:
+                    full_info = await self.client(GetFullChatRequest(entity.id))
+                    # Проверяем через диалоги
+                    async for dialog in self.client.iter_dialogs():
+                        if dialog.entity.id == entity.id:
+                            print(f"✅ [{title}] Найдена в диалогах: УЧАСТНИК")
+                            return True
+                    print(f"❌ [{title}] НЕ найдена в диалогах: НЕ участник")
+                    return False
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if 'not a member' in error_msg or 'not participant' in error_msg:
+                        print(f"❌ [{title}] GetFullChatRequest ошибка: НЕ участник")
+                        return False
+            
+            # Если все методы не сработали - считаем, что НЕ участник (безопаснее)
+            print(f"⚠️ [{title}] Все методы проверки не дали результата, считаю НЕ участником")
+            return False
+            
+        except Exception as e:
+            # В случае ошибки считаем, что НЕ участник (безопаснее)
+            print(f"⚠️ [{title}] Критическая ошибка при проверке участника: {e}, считаю НЕ участником")
+            return False
+    
+    async def _join_group(self, entity, username=None, title="") -> str:
+        """
+        Попытка вступить в группу (нажимает кнопку "Присоединиться" или "Подать заявку")
+        
+        Returns:
+            'joined' - успешно вступили
+            'request_sent' - отправлен запрос на вступление (кнопка "Подать заявку" обработана)
+            'none' - не удалось
+        """
+        try:
+            if isinstance(entity, Channel):
+                # Для каналов и супергрупп
+                try:
+                    print(f"🔄 [{title}] Отправляю JoinChannelRequest (нажимаю кнопку 'Присоединиться'/'Подать заявку')...")
+                    await self.client(JoinChannelRequest(entity))
+                    await asyncio.sleep(max(self.search_delay, 5.0))  # Минимум 5 секунд между вступлениями
+                    
+                    # Проверяем строгим методом, вступили ли мы
+                    is_member = await self._check_membership_strict(entity, title)
+                    if is_member:
+                        print(f"✅ [{title}] Успешно вступил в группу (кнопка 'Присоединиться' сработала)")
+                        return 'joined'
+                    else:
+                        # Если не вступили, но запрос прошел - значит отправлен запрос на одобрение
+                        # Это означает, что кнопка "Подать заявку" была обработана
+                        print(f"⏳ [{title}] Запрос на вступление отправлен (кнопка 'Подать заявку' обработана, ожидается одобрение)")
+                        return 'request_sent'
+                except FloodWaitError as e:
+                    wait_time = e.seconds
+                    wait_minutes = wait_time / 60
+                    print(f"⏸️ [{title}] ⚠️ Flood Wait: Telegram требует подождать {wait_time} секунд (~{wait_minutes:.1f} минут)")
+                    
+                    if wait_time > 300:  # Больше 5 минут
+                        print(f"⏸️ [{title}] Слишком долгое ожидание ({wait_time} сек), пропускаю эту группу")
+                        return 'none'
+                    else:
+                        print(f"⏳ [{title}] Жду {wait_time} секунд перед следующей попыткой...")
+                        await asyncio.sleep(wait_time)
+                        # Пробуем еще раз после ожидания
+                        try:
+                            await self.client(JoinChannelRequest(entity))
+                            await asyncio.sleep(3)
+                            is_member = await self._check_membership_strict(entity, title)
+                            if is_member:
+                                return 'joined'
+                            else:
+                                return 'request_sent'
+                        except:
+                            return 'request_sent'
+                except UserBannedInChannelError:
+                    print(f"❌ [{title}] Забанен в канале")
+                    return 'none'
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    print(f"⚠️ [{title}] Ошибка при вступлении: {e}")
+                    
+                    # Проверяем flood wait в тексте ошибки
+                    if "wait of" in error_msg and "seconds" in error_msg:
+                        try:
+                            wait_seconds = int(error_msg.split("wait of")[1].split("seconds")[0].strip())
+                            wait_minutes = wait_seconds / 60
+                            print(f"⏸️ [{title}] ⚠️ Flood Wait в тексте ошибки: {wait_seconds} секунд (~{wait_minutes:.1f} минут)")
+                            
+                            if wait_seconds > 300:  # Больше 5 минут
+                                print(f"⏸️ [{title}] Слишком долгое ожидание, пропускаю")
+                                return 'none'
+                            else:
+                                print(f"⏳ [{title}] Жду {wait_seconds} секунд...")
+                                await asyncio.sleep(wait_seconds)
+                                return 'request_sent'  # После ожидания считаем, что запрос отправлен
+                        except:
+                            pass
+                    
+                    # Проверяем, это ошибка о необходимости одобрения?
+                    if any(keyword in error_msg for keyword in ['request', 'approval', 'invite', 'pending', 'moderation']):
+                        print(f"⏳ [{title}] Требуется одобрение администратора (кнопка 'Подать заявку' обработана)")
+                        return 'request_sent'
+                    
+                    # Если ошибка "CHANNEL_PRIVATE" - группа приватная, нужен invite
+                    if 'private' in error_msg or 'invite' in error_msg:
+                        print(f"⏳ [{title}] Приватная группа, требуется invite-ссылка")
+                        return 'request_sent'
+                    
+                    # Другие ошибки
+                    return 'none'
+            else:
+                # Обычный чат - обычно нельзя вступить автоматически
+                print(f"⚠️ [{title}] Обычный чат - автоматическое вступление невозможно")
+                return 'none'
+        except Exception as e:
+            error_msg = str(e).lower()
+            print(f"⚠️ [{title}] Исключение при вступлении: {e}")
+            
+            # Проверяем, это ошибка о необходимости одобрения?
+            if any(keyword in error_msg for keyword in ['request', 'approval', 'pending', 'wait', 'moderation']):
+                print(f"⏳ [{title}] Требуется одобрение (кнопка 'Подать заявку' обработана)")
+                return 'request_sent'
+            
+            return 'none'
+    
+    async def process_pending_groups(self, pending_groups: List[Dict], stop_event=None, progress_callback=None) -> Dict:
+        """
+        Обработка pending групп - автоматическое вступление (нажатие кнопки "Присоединиться")
+        
+        Args:
+            pending_groups: Список групп из pending файла
+            stop_event: threading.Event для остановки обработки
+            progress_callback: Функция для обновления прогресса (session_id, current, total, message, current_group)
+            
+        Returns:
+            Словарь с результатами:
+            {
+                'ready_groups': [...],  # Группы, в которые удалось вступить
+                'still_pending': [...],  # Группы, которые все еще pending
+                'errors': [...]  # Группы с ошибками
+            }
+        """
+        ready_groups = []
+        still_pending = []
+        errors = []
+        
+        print(f"\n🔄 Начинаю обработку {len(pending_groups)} pending групп...")
+        
+        for i, group in enumerate(pending_groups):
+            if stop_event and stop_event.is_set():
+                print("⏹ Обработка остановлена пользователем")
+                break
+            
+            group_id = group.get('id')
+            username = group.get('username')
+            title = group.get('title', f"ID: {group_id}")
+            
+            print(f"\n[{i+1}/{len(pending_groups)}] Обрабатываю: {title}")
+            
+            # Обновляем прогресс
+            if progress_callback:
+                progress_callback(i + 1, len(pending_groups), f'Обрабатываю: {title}', title)
+            
+            try:
+                # Получаем entity
+                entity = None
+                if username:
+                    try:
+                        entity = await self.client.get_entity(username)
+                    except (UsernameInvalidError, UsernameNotOccupiedError):
+                        errors.append({
+                            **group,
+                            'check_status': 'error',
+                            'check_message': 'Неверный username',
+                            'check_action': 'none'
+                        })
+                        continue
+                elif group_id:
+                    try:
+                        entity = await self.client.get_entity(group_id)
+                    except Exception as e:
+                        errors.append({
+                            **group,
+                            'check_status': 'error',
+                            'check_message': f'Не удалось получить entity: {str(e)}',
+                            'check_action': 'none'
+                        })
+                        continue
+                else:
+                    errors.append({
+                        **group,
+                        'check_status': 'error',
+                        'check_message': 'Нет ID или username',
+                        'check_action': 'none'
+                    })
+                    continue
+                
+                if not entity:
+                    errors.append({
+                        **group,
+                        'check_status': 'error',
+                        'check_message': 'Не удалось получить entity',
+                        'check_action': 'none'
+                    })
+                    continue
+                
+                # Проверяем, является ли это форумом (группа с темами)
+                is_forum = False
+                forum_topics = []
+                
+                if isinstance(entity, Channel):
+                    try:
+                        full_info = await self.client(GetFullChannelRequest(entity))
+                        is_forum = getattr(full_info.full_chat, 'forum', False)
+                        
+                        if is_forum:
+                            print(f"📚 [{title}] Обнаружен форум с темами, получаю список тем...")
+                            try:
+                                # Получаем темы форума
+                                topics_result = await self.client(GetForumTopicsRequest(
+                                    channel=entity,
+                                    offset_date=0,
+                                    offset_id=0,
+                                    offset_topic=0,
+                                    limit=100
+                                ))
+                                
+                                if hasattr(topics_result, 'topics') and topics_result.topics:
+                                    for topic in topics_result.topics:
+                                        forum_topics.append({
+                                            'id': topic.id,
+                                            'title': topic.title,
+                                            'parent_group': title,
+                                            'parent_group_id': group_id,
+                                            'parent_username': username
+                                        })
+                                    print(f"📚 [{title}] Найдено {len(forum_topics)} тем в форуме")
+                            except Exception as e:
+                                print(f"⚠️ [{title}] Не удалось получить темы форума: {e}")
+                    except Exception as e:
+                        print(f"⚠️ [{title}] Ошибка при проверке форума: {e}")
+                
+                # Обрабатываем основную группу
+                is_member = await self._check_membership_strict(entity, title)
+                
+                if is_member:
+                    # Уже участник - переносим в ready
+                    print(f"✅ [{title}] Уже участник, переношу в ready")
+                    ready_groups.append({
+                        **group,
+                        'check_status': 'ready',
+                        'check_message': 'Уже был участником',
+                        'check_action': 'none'
+                    })
+                    
+                    # Если это форум и мы участники - обрабатываем темы
+                    if is_forum and forum_topics:
+                        print(f"📚 [{title}] Обрабатываю {len(forum_topics)} тем форума...")
+                        for topic in forum_topics:
+                            topic_title = f"{title} > {topic['title']}"
+                            print(f"  📝 Обрабатываю тему: {topic_title}")
+                            
+                            # Для тем форума проверяем доступ через основную группу
+                            # Если мы в основной группе, то имеем доступ к темам
+                            ready_groups.append({
+                                'id': topic['id'],
+                                'title': topic_title,
+                                'username': username,  # Username основной группы
+                                'members_count': group.get('members_count', 'N/A'),
+                                'keyword': group.get('keyword', ''),
+                                'check_status': 'ready',
+                                'check_message': f'Доступ через форум "{title}"',
+                                'check_action': 'forum_topic',
+                                'parent_group': title,
+                                'parent_group_id': group_id
+                            })
+                else:
+                    # Не участник - пытаемся вступить (нажимаем кнопку "Присоединиться" или "Подать заявку")
+                    print(f"🔄 [{title}] Пытаюсь вступить (нажимаю кнопку 'Присоединиться'/'Подать заявку')...")
+                    action_taken = await self._join_group(entity, username, title)
+                    
+                    if action_taken == 'joined':
+                        # Проверяем еще раз после вступления
+                        await asyncio.sleep(3)
+                        is_member = await self._check_membership_strict(entity, title)
+                        
+                        if is_member:
+                            print(f"✅ [{title}] Успешно вступил, переношу в ready")
+                            ready_groups.append({
+                                **group,
+                                'check_status': 'ready',
+                                'check_message': 'Успешно вступил',
+                                'check_action': 'joined'
+                            })
+                            
+                            # Если это форум и мы вступили - обрабатываем темы
+                            if is_forum and forum_topics:
+                                print(f"📚 [{title}] Обрабатываю {len(forum_topics)} тем форума...")
+                                for topic in forum_topics:
+                                    topic_title = f"{title} > {topic['title']}"
+                                    ready_groups.append({
+                                        'id': topic['id'],
+                                        'title': topic_title,
+                                        'username': username,
+                                        'members_count': group.get('members_count', 'N/A'),
+                                        'keyword': group.get('keyword', ''),
+                                        'check_status': 'ready',
+                                        'check_message': f'Доступ через форум "{title}"',
+                                        'check_action': 'forum_topic',
+                                        'parent_group': title,
+                                        'parent_group_id': group_id
+                                    })
+                        else:
+                            print(f"⏳ [{title}] Вступление не подтверждено, оставляю в pending")
+                            still_pending.append({
+                                **group,
+                                'check_status': 'pending',
+                                'check_message': 'Вступление не подтверждено',
+                                'check_action': action_taken
+                            })
+                    elif action_taken == 'request_sent':
+                        print(f"⏳ [{title}] Запрос на вступление отправлен (кнопка 'Подать заявку' обработана), оставляю в pending")
+                        still_pending.append({
+                            **group,
+                            'check_status': 'pending',
+                            'check_message': 'Запрос на вступление отправлен (ожидается одобрение)',
+                            'check_action': 'request_sent'
+                        })
+                    else:
+                        print(f"❌ [{title}] Не удалось вступить, оставляю в pending")
+                        still_pending.append({
+                            **group,
+                            'check_status': 'pending',
+                            'check_message': 'Не удалось вступить автоматически',
+                            'check_action': action_taken
+                        })
+                
+                # Задержка между группами (увеличена для избежания flood wait)
+                if i < len(pending_groups) - 1:
+                    await asyncio.sleep(10.0)  # Увеличено до 10 секунд между группами
+                    
+            except Exception as e:
+                print(f"❌ [{title}] Ошибка при обработке: {e}")
+                errors.append({
+                    **group,
+                    'check_status': 'error',
+                    'check_message': f'Ошибка: {str(e)}',
+                    'check_action': 'none'
+                })
+        
+        print(f"\n✅ Обработка завершена:")
+        print(f"   ✅ Готовых: {len(ready_groups)}")
+        print(f"   ⏳ Все еще pending: {len(still_pending)}")
+        print(f"   ❌ Ошибок: {len(errors)}")
+        
+        return {
+            'ready_groups': ready_groups,
+            'still_pending': still_pending + errors,  # Ошибки тоже в pending
+            'errors': errors
+        }
+    
+    def save_check_results(self, checked_groups: List[Dict], ready_file: str, pending_file: str):
+        """
+        Сохранение результатов проверки групп в два Excel файла:
+        - ready_file: группы, готовые к рассылке (аккаунт уже в группе)
+        - pending_file: группы, требующие действий (запрос отправлен или требуется одобрение)
+        
+        Args:
+            checked_groups: Список словарей с результатами проверки
+            ready_file: Имя файла для готовых групп
+            pending_file: Имя файла для групп в процессе
+        """
+        # Разделяем группы на готовые и требующие действий
+        ready_groups = []
+        pending_groups = []
+        other_groups = []
+        
+        for group in checked_groups:
+            status = group.get('check_status', 'unknown')
+            if status == 'ready':
+                ready_groups.append(group)
+            elif status == 'pending':
+                pending_groups.append(group)
+            else:
+                other_groups.append(group)
+        
+        # Сохраняем готовые группы
+        if ready_groups:
+            wb_ready = Workbook()
+            ws_ready = wb_ready.active
+            ws_ready.title = "Ready Groups"
+            
+            headers = ['ID', 'Название', 'Username', 'Участников', 'Статус', 'Сообщение', 'Действие', 'Ключевое слово', 'Родительская группа']
+            ws_ready.append(headers)
+            
+            header_fill = PatternFill(start_color="4CAF50", end_color="4CAF50", fill_type="solid")
+            header_font = Font(bold=True, color="FFFFFF")
+            
+            for cell in ws_ready[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+            
+            for group in ready_groups:
+                ws_ready.append([
+                    group.get('id', 'N/A'),
+                    group.get('title', 'N/A'),
+                    group.get('username') or 'N/A',
+                    group.get('members_count', 'N/A'),
+                    '✅ Готово к рассылке',
+                    group.get('check_message', ''),
+                    group.get('check_action', ''),
+                    group.get('keyword', ''),
+                    group.get('parent_group', 'N/A')  # Для тем форумов
+                ])
+            
+            # Автоматическая ширина колонок
+            for column in ws_ready.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                ws_ready.column_dimensions[column_letter].width = adjusted_width
+            
+            wb_ready.save(ready_file)
+            print(f"✅ Готовые группы сохранены в: {ready_file} ({len(ready_groups)} групп)")
+        
+        # Сохраняем группы в процессе
+        if pending_groups or other_groups:
+            wb_pending = Workbook()
+            ws_pending = wb_pending.active
+            ws_pending.title = "Pending Groups"
+            
+            headers = ['ID', 'Название', 'Username', 'Участников', 'Статус', 'Сообщение', 'Действие', 'Ключевое слово', 'Родительская группа']
+            ws_pending.append(headers)
+            
+            header_fill = PatternFill(start_color="FF9800", end_color="FF9800", fill_type="solid")
+            header_font = Font(bold=True, color="FFFFFF")
+            
+            for cell in ws_pending[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+            
+            # Добавляем группы в процессе
+            for group in pending_groups:
+                status_text = '⏳ Требует действий'
+                ws_pending.append([
+                    group.get('id', 'N/A'),
+                    group.get('title', 'N/A'),
+                    group.get('username') or 'N/A',
+                    group.get('members_count', 'N/A'),
+                    status_text,
+                    group.get('check_message', ''),
+                    group.get('check_action', ''),
+                    group.get('keyword', ''),
+                    group.get('parent_group', 'N/A')  # Для тем форумов
+                ])
+            
+            # Добавляем другие группы (недоступные, ошибки)
+            for group in other_groups:
+                status = group.get('check_status', 'unknown')
+                status_text = {
+                    'unavailable': '❌ Недоступно',
+                    'error': '⚠️ Ошибка',
+                    'stopped': '⏹ Остановлено'
+                }.get(status, status)
+                
+                ws_pending.append([
+                    group.get('id', 'N/A'),
+                    group.get('title', 'N/A'),
+                    group.get('username') or 'N/A',
+                    group.get('members_count', 'N/A'),
+                    status_text,
+                    group.get('check_message', ''),
+                    group.get('check_action', ''),
+                    group.get('keyword', ''),
+                    group.get('parent_group', 'N/A')  # Для тем форумов
+                ])
+            
+            # Автоматическая ширина колонок
+            for column in ws_pending.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                ws_pending.column_dimensions[column_letter].width = adjusted_width
+            
+            wb_pending.save(pending_file)
+            print(f"✅ Группы в процессе сохранены в: {pending_file} ({len(pending_groups) + len(other_groups)} групп)")
+        
+        return len(ready_groups), len(pending_groups) + len(other_groups)
 
 
 async def main():

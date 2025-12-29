@@ -1,0 +1,17 @@
+[Unit]
+Description=Telegram Searcher Flask Web Server
+After=network.target
+
+[Service]
+Type=simple
+User=nikolai
+WorkingDirectory=/home/nikolai/PycharmProjects/telegram_searcher
+ExecStart=/usr/bin/python3 /home/nikolai/PycharmProjects/telegram_searcher/app.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/tmp/flask_output.log
+StandardError=append:/tmp/flask_output.log
+
+[Install]
+WantedBy=multi-user.target
+

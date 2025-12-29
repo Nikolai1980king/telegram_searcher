@@ -12,6 +12,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 import importlib.util
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
 
 # Импорт основного класса поисковика
 from telegram_searcher import TelegramSearcher
@@ -28,6 +30,14 @@ search_tasks = {}  # {session_id: {'status': 'running'/'completed'/'error', 'res
 search_configs = {}  # {session_id: {'keywords': [], 'cities': [], 'delay': 5.0}}
 search_stop_flags = {}  # {session_id: threading.Event()} - флаги для остановки поиска
 config_file_lock = threading.Lock()  # Блокировка для безопасной записи в config.py
+
+# Переменные для проверки групп
+check_groups_tasks = {}  # {session_id: {'status': 'running'/'completed'/'error', 'progress': {...}}}
+check_groups_stop_flags = {}  # {session_id: threading.Event()}
+
+# Переменные для обработки pending групп
+process_pending_tasks = {}  # {session_id: {'status': 'running'/'completed'/'error', 'progress': {...}}}
+process_pending_stop_flags = {}  # {session_id: threading.Event()}
 
 # Создаем папку для результатов
 os.makedirs('results', exist_ok=True)
@@ -897,6 +907,595 @@ def get_files():
     files.sort(key=lambda x: x['modified'], reverse=True)
     
     return jsonify({'files': files})
+
+
+def run_check_groups_async(session_id, filename, api_id, api_hash):
+    """Запуск проверки групп в отдельном потоке"""
+    def run():
+        try:
+            check_groups_tasks[session_id] = {
+                'status': 'running',
+                'progress': {'current': 0, 'total': 0, 'message': 'Инициализация...'},
+                'result_file': None
+            }
+            
+            # Создаем новый event loop для этого потока
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            async def check_groups():
+                try:
+                    # Инициализация клиента
+                    searcher = TelegramSearcher(api_id, api_hash, search_delay=2.0)
+                    await searcher.connect()
+                    
+                    # Читаем группы из файла
+                    filepath = os.path.join('results', filename) if not os.path.isabs(filename) else filename
+                    if not os.path.exists(filepath):
+                        filepath = filename  # Пробуем прямой путь
+                    
+                    app.logger.info(f"📖 Чтение групп из файла: {filepath}")
+                    groups = TelegramSearcher.read_groups_from_excel(filepath)
+                    
+                    if not groups:
+                        check_groups_tasks[session_id] = {
+                            'status': 'error',
+                            'progress': {'current': 0, 'total': 0, 'message': 'Группы не найдены в файле'},
+                            'result_file': None
+                        }
+                        await searcher.disconnect()
+                        return
+                    
+                    app.logger.info(f"✅ Найдено {len(groups)} групп для проверки")
+                    
+                    # Обновляем прогресс
+                    check_groups_tasks[session_id]['progress'] = {
+                        'current': 0,
+                        'total': len(groups),
+                        'message': f'Начало проверки {len(groups)} групп...'
+                    }
+                    
+                    checked_groups = []
+                    ready_count = 0
+                    pending_count = 0
+                    unavailable_count = 0
+                    
+                    stop_event = check_groups_stop_flags.get(session_id)
+                    
+                    # Проверяем каждую группу
+                    for i, group in enumerate(groups):
+                        if stop_event and stop_event.is_set():
+                            check_groups_tasks[session_id]['status'] = 'stopped'
+                            check_groups_tasks[session_id]['progress']['message'] = 'Проверка остановлена'
+                            break
+                        
+                        group_title = group.get('title', f"ID: {group.get('id', 'N/A')}")
+                        check_groups_tasks[session_id]['progress'] = {
+                            'current': i + 1,
+                            'total': len(groups),
+                            'message': f'Проверяю: {group_title}',
+                            'current_group': group_title
+                        }
+                        
+                        app.logger.info(f"🔍 Проверка группы {i+1}/{len(groups)}: {group_title}")
+                        
+                        # Проверяем доступ
+                        result = await searcher.check_group_access(group, stop_event)
+                        
+                        group['check_status'] = result.get('status', 'error')
+                        group['check_message'] = result.get('message', '')
+                        group['check_action'] = result.get('action_taken', 'none')
+                        checked_groups.append(group)
+                        
+                        # Подсчитываем статистику
+                        if result.get('status') == 'ready':
+                            ready_count += 1
+                        elif result.get('status') == 'pending':
+                            pending_count += 1
+                        else:
+                            unavailable_count += 1
+                        
+                        # Задержка между проверками
+                        if i < len(groups) - 1:  # Не ждем после последней группы
+                            await asyncio.sleep(2.0)  # Задержка 2 секунды
+                    
+                    # Сохраняем результаты в два файла
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    ready_filename = f'ready_groups_{timestamp}.xlsx'
+                    pending_filename = f'pending_groups_{timestamp}.xlsx'
+                    ready_file = os.path.join('results', ready_filename)
+                    pending_file = os.path.join('results', pending_filename)
+                    
+                    saved_ready, saved_pending = searcher.save_check_results(
+                        checked_groups, 
+                        ready_file, 
+                        pending_file
+                    )
+                    
+                    check_groups_tasks[session_id] = {
+                        'status': 'completed',
+                        'progress': {
+                            'current': len(checked_groups),
+                            'total': len(groups),
+                            'message': 'Проверка завершена'
+                        },
+                        'ready_file': ready_filename if saved_ready > 0 else None,
+                        'pending_file': pending_filename if saved_pending > 0 else None,
+                        'ready_count': ready_count,
+                        'pending_count': pending_count,
+                        'unavailable_count': unavailable_count
+                    }
+                    
+                    await searcher.disconnect()
+                    app.logger.info(f"✅ Проверка завершена. Готовых: {ready_count}, Требуют действий: {pending_count}, Недоступных: {unavailable_count}")
+                    
+                except Exception as e:
+                    app.logger.error(f"❌ Ошибка при проверке групп: {e}", exc_info=True)
+                    check_groups_tasks[session_id] = {
+                        'status': 'error',
+                        'progress': {'current': 0, 'total': 0, 'message': f'Ошибка: {str(e)}'},
+                        'result_file': None
+                    }
+            
+            loop.run_until_complete(check_groups())
+            loop.close()
+            
+        except Exception as e:
+            app.logger.error(f"❌ Критическая ошибка в потоке проверки: {e}", exc_info=True)
+            check_groups_tasks[session_id] = {
+                'status': 'error',
+                'progress': {'current': 0, 'total': 0, 'message': f'Критическая ошибка: {str(e)}'},
+                'result_file': None
+            }
+    
+    thread = threading.Thread(target=run)
+    thread.daemon = True
+    thread.start()
+
+
+@app.route('/api/check_groups', methods=['POST'])
+def check_groups():
+    """Запустить проверку групп"""
+    session_id = get_session_id()
+    data = request.json
+    filename = data.get('filename', '').strip()
+    
+    app.logger.info(f"🔍 Запрос на проверку групп от сессии {session_id}, файл: {filename}")
+    
+    if not filename:
+        return jsonify({'success': False, 'message': 'Не указан файл'})
+    
+    # Проверяем API credentials
+    try:
+        import config as app_config
+        api_id = app_config.API_ID
+        api_hash = app_config.API_HASH
+    except Exception as e:
+        app.logger.error(f"❌ Ошибка загрузки API credentials: {e}")
+        return jsonify({'success': False, 'message': 'Ошибка загрузки API credentials'})
+    
+    # Проверяем, не запущена ли уже проверка
+    if session_id in check_groups_tasks and check_groups_tasks[session_id]['status'] == 'running':
+        return jsonify({'success': False, 'message': 'Проверка уже запущена'})
+    
+    # Создаем флаг остановки
+    check_groups_stop_flags[session_id] = threading.Event()
+    
+    # Запускаем проверку в отдельном потоке
+    app.logger.info("🚀 Создание потока для проверки групп...")
+    run_check_groups_async(session_id, filename, api_id, api_hash)
+    app.logger.info("✅ Поток запущен")
+    
+    return jsonify({'success': True, 'message': 'Проверка запущена'})
+
+
+@app.route('/api/stop_check_groups', methods=['POST'])
+def stop_check_groups():
+    """Остановить проверку групп"""
+    session_id = get_session_id()
+    
+    if session_id in check_groups_stop_flags:
+        check_groups_stop_flags[session_id].set()
+        if session_id in check_groups_tasks:
+            check_groups_tasks[session_id]['status'] = 'stopped'
+            check_groups_tasks[session_id]['progress']['message'] = 'Остановка проверки...'
+        return jsonify({'success': True, 'message': 'Команда остановки отправлена'})
+    
+    return jsonify({'success': False, 'message': 'Проверка не запущена'})
+
+
+@app.route('/api/check_groups_status', methods=['GET'])
+def check_groups_status():
+    """Получить статус проверки групп"""
+    session_id = get_session_id()
+    
+    if session_id not in check_groups_tasks:
+        return jsonify({
+            'status': 'idle',
+            'message': 'Проверка не запущена',
+            'current': 0,
+            'total': 0
+        })
+    
+    task = check_groups_tasks[session_id]
+    progress = task.get('progress', {})
+    
+    response = {
+        'status': task.get('status', 'idle'),
+        'current': progress.get('current', 0),
+        'total': progress.get('total', 0),
+        'message': progress.get('message', ''),
+        'current_group': progress.get('current_group', '')
+    }
+    
+    if task.get('status') == 'completed':
+        response['ready_file'] = task.get('ready_file')
+        response['pending_file'] = task.get('pending_file')
+        response['ready_count'] = task.get('ready_count', 0)
+        response['pending_count'] = task.get('pending_count', 0)
+        response['unavailable_count'] = task.get('unavailable_count', 0)
+    
+    return jsonify(response)
+
+
+def run_process_pending_async(session_id, filename, api_id, api_hash):
+    """Запуск обработки pending групп в отдельном потоке"""
+    def run():
+        try:
+            process_pending_tasks[session_id] = {
+                'status': 'running',
+                'progress': {'current': 0, 'total': 0, 'message': 'Инициализация...'},
+                'new_ready_file': None,
+                'updated_pending_file': None
+            }
+            
+            # Создаем новый event loop для этого потока
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            async def process_pending():
+                try:
+                    # Инициализация клиента
+                    searcher = TelegramSearcher(api_id, api_hash, search_delay=2.0)
+                    await searcher.connect()
+                    
+                    # Читаем pending группы из файла
+                    filepath = os.path.join('results', filename) if not os.path.isabs(filename) else filename
+                    if not os.path.exists(filepath):
+                        filepath = filename
+                    
+                    app.logger.info(f"📖 Чтение pending групп из файла: {filepath}")
+                    pending_groups = TelegramSearcher.read_groups_from_excel(filepath)
+                    
+                    if not pending_groups:
+                        process_pending_tasks[session_id] = {
+                            'status': 'error',
+                            'progress': {'current': 0, 'total': 0, 'message': 'Группы не найдены в файле'},
+                            'new_ready_file': None,
+                            'updated_pending_file': None
+                        }
+                        await searcher.disconnect()
+                        return
+                    
+                    app.logger.info(f"✅ Найдено {len(pending_groups)} pending групп для обработки")
+                    
+                    # Обновляем прогресс
+                    process_pending_tasks[session_id]['progress'] = {
+                        'current': 0,
+                        'total': len(pending_groups),
+                        'message': f'Начало обработки {len(pending_groups)} групп...'
+                    }
+                    
+                    stop_event = process_pending_stop_flags.get(session_id)
+                    
+                    # Функция для обновления прогресса
+                    def update_progress(current, total, message, current_group):
+                        process_pending_tasks[session_id]['progress'] = {
+                            'current': current,
+                            'total': total,
+                            'message': message,
+                            'current_group': current_group
+                        }
+                    
+                    # Обрабатываем pending группы
+                    results = await searcher.process_pending_groups(pending_groups, stop_event, update_progress)
+                    
+                    # Сохраняем результаты
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    
+                    new_ready_file = None
+                    updated_pending_file = None
+                    
+                    # Сохраняем новые готовые группы
+                    if results['ready_groups']:
+                        new_ready_filename = f'new_ready_groups_{timestamp}.xlsx'
+                        new_ready_file_path = os.path.join('results', new_ready_filename)
+                        # Используем существующую функцию сохранения (готовые + пустой pending)
+                        searcher.save_check_results(
+                            results['ready_groups'],
+                            new_ready_file_path,
+                            os.path.join('results', 'temp_pending.xlsx')  # Временный файл, потом удалим
+                        )
+                        # Удаляем временный файл
+                        temp_file = os.path.join('results', 'temp_pending.xlsx')
+                        if os.path.exists(temp_file):
+                            os.remove(temp_file)
+                        new_ready_file = new_ready_filename
+                    
+                    # Сохраняем обновленный pending файл
+                    if results['still_pending']:
+                        updated_pending_filename = f'updated_pending_groups_{timestamp}.xlsx'
+                        updated_pending_file_path = os.path.join('results', updated_pending_filename)
+                        # Создаем файл с pending группами вручную
+                        wb = Workbook()
+                        ws = wb.active
+                        ws.title = "Pending Groups"
+                        headers = ['ID', 'Название', 'Username', 'Участников', 'Статус', 'Сообщение', 'Действие', 'Ключевое слово', 'Родительская группа']
+                        ws.append(headers)
+                        header_fill = PatternFill(start_color="FF9800", end_color="FF9800", fill_type="solid")
+                        header_font = Font(bold=True, color="FFFFFF")
+                        for cell in ws[1]:
+                            cell.fill = header_fill
+                            cell.font = header_font
+                        for group in results['still_pending']:
+                            status_text = '⏳ Требует действий'
+                            if group.get('check_status') == 'error':
+                                status_text = '⚠️ Ошибка'
+                            ws.append([
+                                group.get('id', 'N/A'),
+                                group.get('title', 'N/A'),
+                                group.get('username') or 'N/A',
+                                group.get('members_count', 'N/A'),
+                                status_text,
+                                group.get('check_message', ''),
+                                group.get('check_action', ''),
+                                group.get('keyword', ''),
+                                group.get('parent_group', 'N/A')  # Для тем форумов
+                            ])
+                        # Автоматическая ширина колонок
+                        for column in ws.columns:
+                            max_length = 0
+                            column_letter = column[0].column_letter
+                            for cell in column:
+                                try:
+                                    if len(str(cell.value)) > max_length:
+                                        max_length = len(str(cell.value))
+                                except:
+                                    pass
+                            adjusted_width = min(max_length + 2, 50)
+                            ws.column_dimensions[column_letter].width = adjusted_width
+                        wb.save(updated_pending_file_path)
+                        updated_pending_file = updated_pending_filename
+                    
+                    process_pending_tasks[session_id] = {
+                        'status': 'completed',
+                        'progress': {
+                            'current': len(pending_groups),
+                            'total': len(pending_groups),
+                            'message': 'Обработка завершена'
+                        },
+                        'new_ready_file': new_ready_file,
+                        'updated_pending_file': updated_pending_file,
+                        'new_ready_count': len(results['ready_groups']),
+                        'still_pending_count': len(results['still_pending'])
+                    }
+                    
+                    await searcher.disconnect()
+                    app.logger.info(f"✅ Обработка завершена. Новых готовых: {len(results['ready_groups'])}, Все еще pending: {len(results['still_pending'])}")
+                    
+                except Exception as e:
+                    app.logger.error(f"❌ Ошибка при обработке pending групп: {e}", exc_info=True)
+                    process_pending_tasks[session_id] = {
+                        'status': 'error',
+                        'progress': {'current': 0, 'total': 0, 'message': f'Ошибка: {str(e)}'},
+                        'new_ready_file': None,
+                        'updated_pending_file': None
+                    }
+            
+            loop.run_until_complete(process_pending())
+            loop.close()
+            
+        except Exception as e:
+            app.logger.error(f"❌ Критическая ошибка в потоке обработки pending: {e}", exc_info=True)
+            process_pending_tasks[session_id] = {
+                'status': 'error',
+                'progress': {'current': 0, 'total': 0, 'message': f'Критическая ошибка: {str(e)}'},
+                'new_ready_file': None,
+                'updated_pending_file': None
+            }
+    
+    thread = threading.Thread(target=run)
+    thread.daemon = True
+    thread.start()
+
+
+@app.route('/api/process_pending_groups', methods=['POST'])
+def process_pending_groups():
+    """Запустить обработку pending групп"""
+    session_id = get_session_id()
+    data = request.json
+    filename = data.get('filename', '').strip()
+    
+    app.logger.info(f"🔄 Запрос на обработку pending групп от сессии {session_id}, файл: {filename}")
+    
+    if not filename:
+        return jsonify({'success': False, 'message': 'Не указан файл'})
+    
+    if 'pending' not in filename:
+        return jsonify({'success': False, 'message': 'Выберите файл с pending группами'})
+    
+    # Проверяем API credentials
+    try:
+        import config as app_config
+        api_id = app_config.API_ID
+        api_hash = app_config.API_HASH
+    except Exception as e:
+        app.logger.error(f"❌ Ошибка загрузки API credentials: {e}")
+        return jsonify({'success': False, 'message': 'Ошибка загрузки API credentials'})
+    
+    # Проверяем, не запущена ли уже обработка
+    if session_id in process_pending_tasks and process_pending_tasks[session_id]['status'] == 'running':
+        return jsonify({'success': False, 'message': 'Обработка уже запущена'})
+    
+    # Создаем флаг остановки
+    process_pending_stop_flags[session_id] = threading.Event()
+    
+    # Запускаем обработку в отдельном потоке
+    app.logger.info("🚀 Создание потока для обработки pending групп...")
+    run_process_pending_async(session_id, filename, api_id, api_hash)
+    app.logger.info("✅ Поток запущен")
+    
+    return jsonify({'success': True, 'message': 'Обработка запущена'})
+
+
+@app.route('/api/stop_process_pending', methods=['POST'])
+def stop_process_pending():
+    """Остановить обработку pending групп"""
+    session_id = get_session_id()
+    
+    if session_id in process_pending_stop_flags:
+        process_pending_stop_flags[session_id].set()
+        if session_id in process_pending_tasks:
+            process_pending_tasks[session_id]['status'] = 'stopped'
+            process_pending_tasks[session_id]['progress']['message'] = 'Остановка обработки...'
+        return jsonify({'success': True, 'message': 'Команда остановки отправлена'})
+    
+    return jsonify({'success': False, 'message': 'Обработка не запущена'})
+
+
+@app.route('/api/process_pending_status', methods=['GET'])
+def process_pending_status():
+    """Получить статус обработки pending групп"""
+    session_id = get_session_id()
+    
+    if session_id not in process_pending_tasks:
+        return jsonify({
+            'status': 'idle',
+            'message': 'Обработка не запущена',
+            'current': 0,
+            'total': 0
+        })
+    
+    task = process_pending_tasks[session_id]
+    progress = task.get('progress', {})
+    
+    response = {
+        'status': task.get('status', 'idle'),
+        'current': progress.get('current', 0),
+        'total': progress.get('total', 0),
+        'message': progress.get('message', ''),
+        'current_group': progress.get('current_group', '')
+    }
+    
+    if task.get('status') == 'completed':
+        response['new_ready_file'] = task.get('new_ready_file')
+        response['updated_pending_file'] = task.get('updated_pending_file')
+        response['new_ready_count'] = task.get('new_ready_count', 0)
+        response['still_pending_count'] = task.get('still_pending_count', 0)
+    
+    return jsonify(response)
+
+
+@app.route('/api/merge_ready_groups', methods=['POST'])
+def merge_ready_groups():
+    """Объединить все файлы ready_groups в один"""
+    try:
+        results_dir = Path('results')
+        if not results_dir.exists():
+            return jsonify({'success': False, 'message': 'Папка results не найдена'})
+        
+        # Находим все файлы ready_groups
+        ready_files = list(results_dir.glob('ready_groups_*.xlsx'))
+        ready_files += list(results_dir.glob('new_ready_groups_*.xlsx'))
+        
+        if not ready_files:
+            return jsonify({'success': False, 'message': 'Файлы ready_groups не найдены'})
+        
+        app.logger.info(f"📋 Найдено {len(ready_files)} файлов ready_groups для объединения")
+        
+        # Читаем все группы из всех файлов
+        all_groups = []
+        seen_ids = set()  # Для удаления дубликатов
+        
+        for file_path in ready_files:
+            try:
+                groups = TelegramSearcher.read_groups_from_excel(str(file_path))
+                for group in groups:
+                    group_id = group.get('id')
+                    # Проверяем на дубликаты по ID
+                    if group_id and group_id not in seen_ids:
+                        seen_ids.add(group_id)
+                        all_groups.append(group)
+                    elif not group_id:
+                        # Если нет ID, добавляем все равно (может быть тема форума)
+                        all_groups.append(group)
+                app.logger.info(f"  ✅ Из {file_path.name}: {len(groups)} групп")
+            except Exception as e:
+                app.logger.error(f"  ❌ Ошибка чтения {file_path.name}: {e}")
+        
+        if not all_groups:
+            return jsonify({'success': False, 'message': 'Не удалось прочитать группы из файлов'})
+        
+        # Сохраняем объединенный файл
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        result_filename = f'all_ready_groups_{timestamp}.xlsx'
+        result_file = os.path.join('results', result_filename)
+        
+        # Создаем Excel файл с готовыми группами
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "All Ready Groups"
+        
+        headers = ['ID', 'Название', 'Username', 'Участников', 'Статус', 'Сообщение', 'Действие', 'Ключевое слово', 'Родительская группа']
+        ws.append(headers)
+        
+        header_fill = PatternFill(start_color="4CAF50", end_color="4CAF50", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+        
+        for group in all_groups:
+            ws.append([
+                group.get('id', 'N/A'),
+                group.get('title', 'N/A'),
+                group.get('username') or 'N/A',
+                group.get('members_count', 'N/A'),
+                '✅ Готово к рассылке',
+                group.get('check_message', '') or 'Готово к рассылке',
+                group.get('check_action', '') or 'none',
+                group.get('keyword', ''),
+                group.get('parent_group', 'N/A')
+            ])
+        
+        # Автоматическая ширина колонок
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+        
+        wb.save(result_file)
+        
+        app.logger.info(f"✅ Объединено {len(ready_files)} файлов, всего {len(all_groups)} групп в {result_filename}")
+        
+        return jsonify({
+            'success': True,
+            'result_file': result_filename,
+            'files_count': len(ready_files),
+            'total_groups': len(all_groups)
+        })
+        
+    except Exception as e:
+        app.logger.error(f"❌ Ошибка при объединении файлов: {e}", exc_info=True)
+        return jsonify({'success': False, 'message': f'Ошибка: {str(e)}'})
 
 
 if __name__ == '__main__':
