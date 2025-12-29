@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Searcher - Поиск групп и каналов</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        input[type="text"], input[type="number"] {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        
+        input[type="text"]:focus, input[type="number"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        button {
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        
+        button:hover {
+            background: #5568d3;
+        }
+        
+        button.danger {
+            background: #dc3545;
+        }
+        
+        button.danger:hover {
+            background: #c82333;
+        }
+        
+        button.success {
+            background: #28a745;
+        }
+        
+        button.success:hover {
+            background: #218838;
+        }
+        
+        .list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 15px;
+            background: #667eea;
+            color: white;
+            border-radius: 20px;
+            font-size: 14px;
+        }
+        
+        .tag .remove {
+            cursor: pointer;
+            font-weight: bold;
+            padding: 0 5px;
+        }
+        
+        .tag .remove:hover {
+            color: #ffc107;
+        }
+        
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            text-align: center;
+            font-weight: bold;
+        }
+        
+        .status.idle {
+            background: #e9ecef;
+            color: #495057;
+        }
+        
+        .status.running {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .status.completed {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .status.stopped {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .results {
+            margin-top: 20px;
+        }
+        
+        .result-item {
+            padding: 15px;
+            background: white;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .result-item .info {
+            flex: 1;
+        }
+        
+        .result-item .info strong {
+            color: #667eea;
+        }
+        
+        .files-list {
+            margin-top: 20px;
+        }
+        
+        .file-item {
+            padding: 10px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-bottom: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Telegram Searcher</h1>
+        
+        <!-- Ключевые слова -->
+        <div class="section">
+            <h2>📝 Ключевые слова</h2>
+            <div class="input-group">
+                <input type="text" id="keywordInput" placeholder="Введите ключевые слова через запятую (например: знакомства, общение, друзья)">
+                <button onclick="addKeyword()">Добавить</button>
+            </div>
+            <p style="margin-top: 5px; font-size: 12px; color: #666;">💡 Можно вводить несколько слов через запятую</p>
+            <div class="list" id="keywordsList"></div>
+        </div>
+        
+        <!-- Города -->
+        <div class="section">
+            <h2>🏙️ Города</h2>
+            <div class="input-group">
+                <input type="text" id="cityInput" placeholder="Введите города через запятую (например: Москва, СПб, Казань)">
+                <button onclick="addCity()">Добавить</button>
+            </div>
+            <p style="margin-top: 5px; font-size: 12px; color: #666;">💡 Можно вводить несколько городов через запятую</p>
+            <div class="list" id="citiesList"></div>
+        </div>
+        
+        <!-- Задержка -->
+        <div class="section">
+            <h2>⏱️ Задержка между запросами</h2>
+            <div class="input-group">
+                <input type="number" id="delayInput" value="5.0" min="0.5" max="60" step="0.5" placeholder="Секунды">
+                <button onclick="setDelay()">Установить</button>
+            </div>
+            <p style="margin-top: 10px; color: #666;">Рекомендуется: 5.0 секунд для безопасности</p>
+        </div>
+        
+        <!-- Управление поиском -->
+        <div class="section">
+            <h2>🚀 Управление поиском</h2>
+            <div style="display: flex; gap: 10px;">
+                <button id="startBtn" class="success" onclick="startSearch()" style="flex: 1; padding: 15px; font-size: 18px;">
+                    Начать поиск
+                </button>
+                <button id="stopBtn" class="danger" onclick="stopSearch()" style="flex: 1; padding: 15px; font-size: 18px;" disabled>
+                    Остановить поиск
+                </button>
+            </div>
+        </div>
+        
+        <!-- Статус -->
+        <div class="section">
+            <h2>📊 Статус</h2>
+            <div id="status" class="status idle">Готов к запуску</div>
+            <div id="results" class="results"></div>
+        </div>
+        
+        <!-- Файлы результатов -->
+        <div class="section">
+            <h2>📁 Файлы результатов</h2>
+            <button onclick="loadFiles()" style="margin-bottom: 15px;">Обновить список</button>
+            <div id="filesList" class="files-list"></div>
+        </div>
+    </div>
+    
+    <script>
+        let keywords = {{ keywords|tojson }};
+        let cities = {{ cities|tojson }};
+        let delay = {{ delay }};
+        let statusInterval = null;
+        
+        // Загрузка данных при старте
+        window.onload = function() {
+            updateKeywordsList();
+            updateCitiesList();
+            document.getElementById('delayInput').value = delay;
+            loadFiles();
+            checkStatus();
+        };
+        
+        function checkStatus() {
+            fetch('/api/status')
+                .then(r => r.json())
+                .then(data => {
+                    updateStatus(data);
+                    if (data.status === 'running' || data.status === 'starting') {
+                        document.getElementById('startBtn').disabled = true;
+                        document.getElementById('startBtn').style.opacity = '0.5';
+                        document.getElementById('stopBtn').disabled = false;
+                        document.getElementById('stopBtn').style.opacity = '1';
+                        startStatusPolling();
+                    } else {
+                        document.getElementById('startBtn').disabled = false;
+                        document.getElementById('startBtn').style.opacity = '1';
+                        document.getElementById('stopBtn').disabled = true;
+                        document.getElementById('stopBtn').style.opacity = '0.5';
+                    }
+                });
+        }
+        
+        function addKeyword() {
+            const input = document.getElementById('keywordInput');
+            const inputValue = input.value.trim();
+            
+            if (!inputValue) {
+                alert('Введите ключевые слова');
+                return;
+            }
+            
+            // Разделяем по запятой и очищаем от пробелов
+            const keywordsToAdd = inputValue.split(',')
+                .map(k => k.trim())
+                .filter(k => k.length > 0);
+            
+            if (keywordsToAdd.length === 0) {
+                alert('Введите хотя бы одно ключевое слово');
+                return;
+            }
+            
+            // Добавляем каждое слово по очереди
+            let lastResponse = null;
+            let promises = keywordsToAdd.map(keyword => {
+                return fetch('/api/add_keyword', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({keyword: keyword})
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        lastResponse = data; // Сохраняем последний успешный ответ
+                        return true;
+                    } else {
+                        console.warn(`Не удалось добавить "${keyword}": ${data.message}`);
+                        return false;
+                    }
+                });
+            });
+            
+            Promise.all(promises).then(() => {
+                if (lastResponse && lastResponse.success) {
+                    keywords = lastResponse.keywords || [];
+                    updateKeywordsList();
+                }
+                input.value = '';
+            })
+            .catch(err => {
+                console.error('Ошибка при добавлении ключевых слов:', err);
+                alert('Ошибка при добавлении ключевых слов');
+            });
+        }
+        
+        function removeKeyword(keyword) {
+            console.log('Удаление ключевого слова:', keyword);
+            fetch('/api/remove_keyword', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({keyword: keyword})
+            })
+            .then(r => r.json())
+            .then(data => {
+                console.log('Ответ сервера:', data);
+                if (data.success) {
+                    keywords = data.keywords || [];
+                    updateKeywordsList();
+                    console.log('Список обновлен:', keywords);
+                } else {
+                    alert(data.message || 'Ошибка удаления');
+                }
+            })
+            .catch(err => {
+                console.error('Ошибка удаления:', err);
+                alert('Ошибка при удалении ключевого слова: ' + err);
+            });
+        }
+        
+        function updateKeywordsList() {
+            const list = document.getElementById('keywordsList');
+            if (keywords.length === 0) {
+                list.innerHTML = '<p style="color: #999;">Ключевые слова не добавлены</p>';
+                return;
+            }
+            // Очищаем список
+            list.innerHTML = '';
+            
+            // Создаем элементы через DOM для безопасности
+            keywords.forEach(k => {
+                const tag = document.createElement('div');
+                tag.className = 'tag';
+                tag.innerHTML = `${k} <span class="remove">×</span>`;
+                
+                // Добавляем обработчик клика на крестик
+                const removeBtn = tag.querySelector('.remove');
+                removeBtn.onclick = function(e) {
+                    e.stopPropagation();
+                    removeKeyword(k);
+                };
+                
+                list.appendChild(tag);
+            });
+        }
+        
+        function addCity() {
+            const input = document.getElementById('cityInput');
+            const inputValue = input.value.trim();
+            
+            if (!inputValue) {
+                alert('Введите названия городов');
+                return;
+            }
+            
+            // Разделяем по запятой и очищаем от пробелов
+            const citiesToAdd = inputValue.split(',')
+                .map(c => c.trim())
+                .filter(c => c.length > 0);
+            
+            if (citiesToAdd.length === 0) {
+                alert('Введите хотя бы один город');
+                return;
+            }
+            
+            // Добавляем каждый город по очереди
+            let lastResponse = null;
+            let promises = citiesToAdd.map(city => {
+                return fetch('/api/add_city', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({city: city})
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        lastResponse = data; // Сохраняем последний успешный ответ
+                        return true;
+                    } else {
+                        console.warn(`Не удалось добавить "${city}": ${data.message}`);
+                        return false;
+                    }
+                });
+            });
+            
+            Promise.all(promises).then(() => {
+                if (lastResponse && lastResponse.success) {
+                    cities = lastResponse.cities || [];
+                    updateCitiesList();
+                }
+                input.value = '';
+            })
+            .catch(err => {
+                console.error('Ошибка при добавлении городов:', err);
+                alert('Ошибка при добавлении городов');
+            });
+        }
+        
+        function removeCity(city) {
+            console.log('Удаление города:', city);
+            fetch('/api/remove_city', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({city: city})
+            })
+            .then(r => r.json())
+            .then(data => {
+                console.log('Ответ сервера:', data);
+                if (data.success) {
+                    cities = data.cities || [];
+                    updateCitiesList();
+                    console.log('Список обновлен:', cities);
+                } else {
+                    alert(data.message || 'Ошибка удаления');
+                }
+            })
+            .catch(err => {
+                console.error('Ошибка удаления:', err);
+                alert('Ошибка при удалении города: ' + err);
+            });
+        }
+        
+        function updateCitiesList() {
+            const list = document.getElementById('citiesList');
+            if (cities.length === 0) {
+                list.innerHTML = '<p style="color: #999;">Города не добавлены</p>';
+                return;
+            }
+            // Очищаем список
+            list.innerHTML = '';
+            
+            // Создаем элементы через DOM для безопасности
+            cities.forEach(c => {
+                const tag = document.createElement('div');
+                tag.className = 'tag';
+                tag.innerHTML = `${c} <span class="remove">×</span>`;
+                
+                // Добавляем обработчик клика на крестик
+                const removeBtn = tag.querySelector('.remove');
+                removeBtn.onclick = function(e) {
+                    e.stopPropagation();
+                    removeCity(c);
+                };
+                
+                list.appendChild(tag);
+            });
+        }
+        
+        function setDelay() {
+            const input = document.getElementById('delayInput');
+            delay = parseFloat(input.value);
+            
+            fetch('/api/set_delay', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({delay: delay})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Задержка установлена: ' + delay + ' секунд');
+                }
+            });
+        }
+        
+        function startSearch() {
+            console.log('🔍 Запуск поиска...');
+            
+            // Проверяем, что есть ключевые слова
+            if (!keywords || keywords.length === 0) {
+                alert('⚠️ Добавьте хотя бы одно ключевое слово перед запуском поиска!');
+                return;
+            }
+            
+            // Блокируем кнопку на время запроса
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            startBtn.disabled = true;
+            startBtn.textContent = 'Запуск...';
+            
+            fetch('/api/start_search', {method: 'POST'})
+                .then(r => {
+                    if (!r.ok) {
+                        throw new Error(`HTTP error! status: ${r.status}`);
+                    }
+                    return r.json();
+                })
+                .then(data => {
+                    console.log('Ответ сервера:', data);
+                    if (data.success) {
+                        startBtn.disabled = true;
+                        startBtn.style.opacity = '0.5';
+                        startBtn.textContent = 'Начать поиск';
+                        stopBtn.disabled = false;
+                        stopBtn.style.opacity = '1';
+                        startStatusPolling();
+                        console.log('✅ Поиск запущен');
+                    } else {
+                        startBtn.disabled = false;
+                        alert('Ошибка: ' + (data.message || 'Неизвестная ошибка'));
+                        console.error('Ошибка запуска поиска:', data);
+                    }
+                })
+                .catch(err => {
+                    startBtn.disabled = false;
+                    console.error('Ошибка при запросе:', err);
+                    alert('Ошибка при запуске поиска: ' + err.message + '\n\nПроверьте консоль браузера (F12) для подробностей.');
+                });
+        }
+        
+        function stopSearch() {
+            console.log('🛑 Остановка поиска...');
+            
+            if (confirm('Вы уверены, что хотите остановить поиск? Найденные результаты будут сохранены.')) {
+                const stopBtn = document.getElementById('stopBtn');
+                stopBtn.disabled = true;
+                stopBtn.textContent = 'Остановка...';
+                
+                fetch('/api/stop_search', {method: 'POST'})
+                    .then(r => {
+                        if (!r.ok) {
+                            throw new Error(`HTTP error! status: ${r.status}`);
+                        }
+                        return r.json();
+                    })
+                    .then(data => {
+                        console.log('Ответ сервера:', data);
+                        if (data.success) {
+                            stopBtn.disabled = true;
+                            stopBtn.textContent = 'Остановка...';
+                            console.log('✅ Команда остановки отправлена');
+                        } else {
+                            stopBtn.disabled = false;
+                            stopBtn.textContent = 'Остановить поиск';
+                            alert(data.message || 'Ошибка остановки');
+                            console.error('Ошибка остановки:', data);
+                        }
+                    })
+                    .catch(err => {
+                        stopBtn.disabled = false;
+                        stopBtn.textContent = 'Остановить поиск';
+                        console.error('Ошибка при запросе остановки:', err);
+                        alert('Ошибка при остановке поиска: ' + err.message);
+                    });
+            }
+        }
+        
+        function startStatusPolling() {
+            if (statusInterval) clearInterval(statusInterval);
+            
+            statusInterval = setInterval(() => {
+                fetch('/api/status')
+                    .then(r => r.json())
+                    .then(data => {
+                        updateStatus(data);
+                        
+                        if (data.status === 'completed' || data.status === 'error' || data.status === 'interrupted' || data.status === 'stopped') {
+                            clearInterval(statusInterval);
+                            document.getElementById('startBtn').disabled = false;
+                            document.getElementById('startBtn').style.opacity = '1';
+                            document.getElementById('stopBtn').disabled = true;
+                            document.getElementById('stopBtn').style.opacity = '0.5';
+                            document.getElementById('stopBtn').textContent = 'Остановить поиск';
+                            loadFiles();
+                        }
+                    });
+            }, 5000); // Проверяем каждые 5 секунд
+        }
+        
+        function updateStatus(data) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = 'status ' + data.status;
+            statusDiv.textContent = data.message || 'Готов к запуску';
+            
+            // Управление кнопками на основе статуса
+            if (data.status === 'running' || data.status === 'starting') {
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('startBtn').style.opacity = '0.5';
+                document.getElementById('stopBtn').disabled = false;
+                document.getElementById('stopBtn').style.opacity = '1';
+            } else {
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('startBtn').style.opacity = '1';
+                document.getElementById('stopBtn').disabled = true;
+                document.getElementById('stopBtn').style.opacity = '0.5';
+            }
+            
+            const resultsDiv = document.getElementById('results');
+            if (data.results) {
+                resultsDiv.innerHTML = `
+                    <div class="result-item">
+                        <div class="info">
+                            <strong>Группы:</strong> ${data.results.groups_count} найдено
+                        </div>
+                        <button onclick="downloadFile('${data.results.groups_file.split('/').pop()}')">Скачать</button>
+                    </div>
+                    <div class="result-item">
+                        <div class="info">
+                            <strong>Каналы:</strong> ${data.results.channels_count} найдено
+                        </div>
+                        <button onclick="downloadFile('${data.results.channels_file.split('/').pop()}')">Скачать</button>
+                    </div>
+                `;
+            } else {
+                resultsDiv.innerHTML = '';
+            }
+        }
+        
+        function downloadFile(filename) {
+            window.location.href = '/api/download/' + filename;
+        }
+        
+        function loadFiles() {
+            fetch('/api/get_files')
+                .then(r => r.json())
+                .then(data => {
+                    const list = document.getElementById('filesList');
+                    if (data.files.length === 0) {
+                        list.innerHTML = '<p>Файлы не найдены</p>';
+                        return;
+                    }
+                    
+                    list.innerHTML = data.files.map(f => `
+                        <div class="file-item">
+                            <div>
+                                <strong>${f.name}</strong><br>
+                                <small>${f.modified} (${(f.size / 1024).toFixed(2)} KB)</small>
+                            </div>
+                            <button onclick="downloadFile('${f.name}')">Скачать</button>
+                        </div>
+                    `).join('');
+                });
+        }
+        
+        // Enter для добавления
+        document.getElementById('keywordInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') addKeyword();
+        });
+        
+        document.getElementById('cityInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') addCity();
+        });
+    </script>
+</body>
+</html>
+
