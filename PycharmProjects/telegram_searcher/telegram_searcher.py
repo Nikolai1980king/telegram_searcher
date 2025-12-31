@@ -501,7 +501,8 @@ class TelegramSearcher:
             
             # Пропускаем заголовок (первая строка)
             for row in ws.iter_rows(min_row=2, values_only=True):
-                if not row[0]:  # Пропускаем пустые строки
+                # Пропускаем только полностью пустые строки (нет ни ID, ни username)
+                if not row[0] and not row[2]:  # Нет ID и нет username
                     continue
                 
                 if is_ready_format:
@@ -519,11 +520,26 @@ class TelegramSearcher:
                     }
                 else:
                     # Обычный формат: ID, Название, Username, Количество участников, Ключевое слово
+                    # Обработка для файлов, созданных из текста (ID может быть пустым)
+                    group_id = None
+                    if row[0]:
+                        try:
+                            if isinstance(row[0], (int, float)):
+                                group_id = int(row[0])
+                            elif str(row[0]).strip() and str(row[0]) != 'N/A':
+                                group_id = int(row[0])
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    username = None
+                    if row[2] and str(row[2]).strip() and str(row[2]) != 'N/A':
+                        username = str(row[2]).strip()
+                    
                     group_info = {
-                        'id': int(row[0]) if row[0] else None,
-                        'title': str(row[1]) if row[1] else 'N/A',
-                        'username': str(row[2]) if row[2] and str(row[2]) != 'N/A' else None,
-                        'members_count': row[3] if len(row) > 3 else None,
+                        'id': group_id,
+                        'title': str(row[1]) if row[1] else (username or 'N/A'),
+                        'username': username,
+                        'members_count': row[3] if len(row) > 3 and row[3] else None,
                         'keyword': row[4] if len(row) > 4 else None
                     }
                 
@@ -1246,6 +1262,199 @@ class TelegramSearcher:
             print(f"✅ Группы в процессе сохранены в: {pending_file} ({len(pending_groups) + len(other_groups)} групп)")
         
         return len(ready_groups), len(pending_groups) + len(other_groups)
+    
+    async def send_message_to_group(self, group_id, username, title, message_text="", photo_path=None, video_path=None) -> Dict:
+        """
+        Отправка сообщения в группу
+        
+        Args:
+            group_id: ID группы
+            username: Username группы (опционально)
+            title: Название группы (для логов)
+            message_text: Текст сообщения
+            photo_path: Путь к фото (опционально)
+            video_path: Путь к видео (опционально)
+            
+        Returns:
+            Словарь с результатом:
+            {
+                'success': bool,
+                'message': str,
+                'blocked': bool  # True если заблокирован
+            }
+        """
+        import os
+        try:
+            # Получаем entity
+            entity = None
+            if username:
+                # Убираем @ если есть, Telethon сам добавит
+                clean_username = username.lstrip('@')
+                try:
+                    entity = await self.client.get_entity(clean_username)
+                except (UsernameInvalidError, UsernameNotOccupiedError):
+                    return {
+                        'success': False,
+                        'message': 'Неверный username',
+                        'blocked': False
+                    }
+            elif group_id:
+                try:
+                    entity = await self.client.get_entity(group_id)
+                except Exception as e:
+                    return {
+                        'success': False,
+                        'message': f'Не удалось получить entity: {str(e)}',
+                        'blocked': False
+                    }
+            else:
+                return {
+                    'success': False,
+                    'message': 'Нет ID или username',
+                    'blocked': False
+                }
+            
+            # Проверяем, что мы участники
+            is_member = await self._check_membership_strict(entity, title)
+            if not is_member:
+                return {
+                    'success': False,
+                    'message': 'Не являемся участником группы',
+                    'blocked': False
+                }
+            
+            # Отправляем сообщение
+            try:
+                if photo_path and os.path.exists(photo_path):
+                    # Отправляем фото с текстом
+                    await self.client.send_file(entity, photo_path, caption=message_text if message_text else None)
+                elif video_path and os.path.exists(video_path):
+                    # Отправляем видео с текстом
+                    await self.client.send_file(entity, video_path, caption=message_text if message_text else None)
+                elif message_text:
+                    # Отправляем только текст
+                    await self.client.send_message(entity, message_text)
+                else:
+                    return {
+                        'success': False,
+                        'message': 'Не указан текст и не загружены файлы',
+                        'blocked': False
+                    }
+                
+                return {
+                    'success': True,
+                    'message': 'Сообщение отправлено успешно',
+                    'blocked': False
+                }
+                
+            except UserBannedInChannelError:
+                return {
+                    'success': False,
+                    'message': 'Забанен в канале',
+                    'blocked': True
+                }
+            except FloodWaitError as e:
+                wait_time = e.seconds
+                return {
+                    'success': False,
+                    'message': f'Flood wait: нужно подождать {wait_time} секунд',
+                    'blocked': False
+                }
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'blocked' in error_msg or 'ban' in error_msg:
+                    return {
+                        'success': False,
+                        'message': f'Заблокирован: {str(e)}',
+                        'blocked': True
+                    }
+                return {
+                    'success': False,
+                    'message': f'Ошибка отправки: {str(e)}',
+                    'blocked': False
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Исключение: {str(e)}',
+                'blocked': False
+            }
+    
+    def save_sending_report(self, results: List[Dict], report_file: str, sent_count: int, error_count: int, blocked_count: int, skipped_count: int):
+        """
+        Сохранение отчета о рассылке в Excel
+        
+        Args:
+            results: Список результатов отправки
+            report_file: Путь к файлу отчета
+            sent_count: Количество успешно отправленных
+            error_count: Количество ошибок
+            blocked_count: Количество заблокированных
+            skipped_count: Количество пропущенных
+        """
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Sending Report"
+        
+        # Заголовки
+        headers = ['ID', 'Название', 'Username', 'Участников', 'Статус', 'Сообщение', 'Время отправки', 'Ключевое слово']
+        ws.append(headers)
+        
+        header_fill = PatternFill(start_color="667eea", end_color="667eea", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+        
+        # Статистика в первой строке после заголовка
+        ws.append(['', '', '', '', '', '', '', ''])
+        ws.append(['СТАТИСТИКА', '', '', '', '', '', '', ''])
+        ws.append(['✅ Отправлено успешно:', sent_count, '', '', '', '', '', ''])
+        ws.append(['❌ Ошибки:', error_count, '', '', '', '', '', ''])
+        ws.append(['🚫 Заблокировано:', blocked_count, '', '', '', '', '', ''])
+        ws.append(['⏭️ Пропущено:', skipped_count, '', '', '', '', '', ''])
+        ws.append(['', '', '', '', '', '', '', ''])
+        ws.append(['ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ', '', '', '', '', '', '', ''])
+        ws.append(headers)  # Повторяем заголовки
+        
+        # Данные
+        for result in results:
+            status = result.get('status', 'unknown')
+            status_text = {
+                'sent': '✅ Отправлено',
+                'error': '❌ Ошибка',
+                'blocked': '🚫 Заблокировано',
+                'skipped': '⏭️ Пропущено'
+            }.get(status, status)
+            
+            ws.append([
+                result.get('id', 'N/A'),
+                result.get('title', 'N/A'),
+                result.get('username') or 'N/A',
+                result.get('members_count', 'N/A'),
+                status_text,
+                result.get('message', ''),
+                result.get('timestamp', 'N/A'),
+                result.get('keyword', '')
+            ])
+        
+        # Автоматическая ширина колонок
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+        
+        wb.save(report_file)
+        print(f"✅ Отчет о рассылке сохранен: {report_file}")
 
 
 async def main():

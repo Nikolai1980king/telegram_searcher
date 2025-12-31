@@ -12,6 +12,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 import importlib.util
+from typing import List, Dict
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
@@ -50,6 +51,53 @@ def get_session_id():
     if 'session_id' not in session:
         session['session_id'] = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     return session['session_id']
+
+
+def parse_groups_from_text(text: str) -> List[Dict]:
+    """
+    Парсинг списка групп из текста
+    Формат: каждая строка = один аккаунт (username или ID)
+    
+    Args:
+        text: Текст со списком аккаунтов
+        
+    Returns:
+        Список словарей с информацией о группах
+    """
+    groups = []
+    lines = text.strip().split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        # Убираем @ если есть
+        if line.startswith('@'):
+            line = line[1:]
+        
+        # Пытаемся определить, это ID или username
+        group_info = {}
+        
+        # Если это число - считаем ID
+        try:
+            group_id = int(line)
+            group_info = {
+                'id': group_id,
+                'username': None,
+                'title': f"ID: {group_id}"
+            }
+        except ValueError:
+            # Это username
+            group_info = {
+                'id': None,
+                'username': line,
+                'title': line
+            }
+        
+        groups.append(group_info)
+    
+    return groups
 
 
 def save_config_to_file(keywords, cities, delay):
@@ -518,6 +566,11 @@ def index():
                          cities=config['cities'],
                          delay=config['delay'])
 
+@app.route('/send_messages')
+def send_messages_page():
+    """Страница рассылки сообщений"""
+    return render_template('send_messages.html')
+
 
 @app.route('/api/add_keyword', methods=['POST'])
 def add_keyword():
@@ -906,7 +959,10 @@ def get_files():
     # Сортируем по дате изменения (новые первыми)
     files.sort(key=lambda x: x['modified'], reverse=True)
     
-    return jsonify({'files': files})
+    # Также возвращаем простой список имен для обратной совместимости
+    file_names = [f['name'] for f in files]
+    
+    return jsonify({'files': files, 'file_names': file_names})
 
 
 def run_check_groups_async(session_id, filename, api_id, api_hash):
@@ -1497,6 +1553,439 @@ def merge_ready_groups():
         app.logger.error(f"❌ Ошибка при объединении файлов: {e}", exc_info=True)
         return jsonify({'success': False, 'message': f'Ошибка: {str(e)}'})
 
+
+# Глобальные переменные для рассылки
+sending_tasks = {}  # session_id -> task info
+sending_stop_flags = {}  # session_id -> threading.Event
+
+@app.route('/api/start_sending', methods=['POST'])
+def start_sending():
+    """Запуск рассылки сообщений"""
+    session_id = get_session_id()
+    
+    try:
+        # Получаем данные из формы
+        filename = request.form.get('filename')  # Файл из списка
+        uploaded_file = request.files.get('uploaded_file')  # Загруженный пользователем файл
+        groups_text = request.form.get('groups_text', '').strip()  # Текстовый список аккаунтов
+        message_text = request.form.get('message_text', '')
+        message_limit = int(request.form.get('message_limit', 50))
+        send_delay = float(request.form.get('send_delay', 5.0))
+        
+        # Получаем файлы
+        photo_file = request.files.get('photo')
+        video_file = request.files.get('video')
+        
+        # Определяем, какой источник использовать
+        if uploaded_file:
+            # Сохраняем загруженный файл
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            uploaded_filename = f'uploaded_groups_{timestamp}.xlsx'
+            uploaded_filepath = os.path.join('results', uploaded_filename)
+            os.makedirs('results', exist_ok=True)
+            uploaded_file.save(uploaded_filepath)
+            filename = uploaded_filename  # Используем загруженный файл
+            app.logger.info(f"📁 Загружен файл пользователя: {uploaded_filename}")
+        elif groups_text:
+            # Создаем временный файл из текстового списка
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            temp_filename = f'text_groups_{timestamp}.xlsx'
+            temp_filepath = os.path.join('results', temp_filename)
+            os.makedirs('results', exist_ok=True)
+            
+            # Парсим текстовый список и создаем Excel файл
+            groups_list = parse_groups_from_text(groups_text)
+            if not groups_list:
+                return jsonify({'success': False, 'message': 'Не удалось распознать аккаунты в тексте. Используйте формат: @username или username или ID группы, каждый с новой строки'})
+            
+            # Создаем Excel файл
+            from openpyxl import Workbook
+            wb = Workbook()
+            ws = wb.active
+            ws.append(['ID', 'Название', 'Username', 'Участников', 'Ключевое слово'])
+            
+            for group in groups_list:
+                group_id = group.get('id', '')
+                username = group.get('username', '')
+                title = group.get('title', username or f"ID: {group_id}" if group_id else 'N/A')
+                
+                ws.append([
+                    group_id if group_id else '',  # ID (может быть пустым для username)
+                    title,
+                    username if username else '',  # Username (может быть пустым для ID)
+                    '',
+                    'text_input'
+                ])
+                
+                app.logger.info(f"  📝 Добавлена группа: id={group_id}, username={username}, title={title}")
+            
+            wb.save(temp_filepath)
+            filename = temp_filename
+            app.logger.info(f"📝 Создан файл из текстового списка: {temp_filename} ({len(groups_list)} групп)")
+        elif not filename:
+            return jsonify({'success': False, 'message': 'Не выбран файл с группами, не загружен файл и не введен список аккаунтов'})
+        
+        if not message_text and not photo_file and not video_file:
+            return jsonify({'success': False, 'message': 'Не указан текст сообщения или не загружены файлы'})
+        
+        # Загружаем API credentials из config.py
+        spec = importlib.util.spec_from_file_location("config", "config.py")
+        config = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(config)
+        
+        api_id = config.API_ID
+        api_hash = config.API_HASH
+        
+        # Сохраняем загруженные файлы
+        photo_path = None
+        video_path = None
+        
+        if photo_file:
+            photo_path = os.path.join('uploads', f'photo_{session_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.jpg')
+            os.makedirs('uploads', exist_ok=True)
+            photo_file.save(photo_path)
+        
+        if video_file:
+            video_path = os.path.join('uploads', f'video_{session_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.mp4')
+            os.makedirs('uploads', exist_ok=True)
+            video_file.save(video_path)
+        
+        # Создаем stop event
+        stop_event = threading.Event()
+        sending_stop_flags[session_id] = stop_event
+        
+        # Инициализируем задачу
+        sending_tasks[session_id] = {
+            'status': 'running',
+            'progress': {
+                'current': 0,
+                'total': 0,
+                'message': 'Инициализация...',
+                'current_group': ''
+            },
+            'sent_count': 0,
+            'error_count': 0,
+            'blocked_count': 0,
+            'skipped_count': 0,
+            'logs': []
+        }
+        
+        # Запускаем рассылку в отдельном потоке
+        thread = threading.Thread(
+            target=run_sending_async,
+            args=(session_id, filename, message_text, message_limit, send_delay, photo_path, video_path, api_id, api_hash, stop_event)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({'success': True, 'message': 'Рассылка запущена'})
+        
+    except Exception as e:
+        app.logger.error(f"Ошибка при запуске рассылки: {e}", exc_info=True)
+        return jsonify({'success': False, 'message': f'Ошибка: {str(e)}'})
+
+@app.route('/api/stop_sending', methods=['POST'])
+def stop_sending():
+    """Остановка рассылки"""
+    session_id = get_session_id()
+    stop_event = sending_stop_flags.get(session_id)
+    
+    if stop_event:
+        stop_event.set()
+        if session_id in sending_tasks:
+            sending_tasks[session_id]['status'] = 'stopped'
+        return jsonify({'success': True, 'message': 'Рассылка остановлена'})
+    
+    return jsonify({'success': False, 'message': 'Рассылка не найдена'})
+
+@app.route('/api/sending_status', methods=['GET'])
+def sending_status():
+    """Получение статуса рассылки"""
+    session_id = get_session_id()
+    task = sending_tasks.get(session_id, {})
+    progress = task.get('progress', {})
+    
+    response = {
+        'status': task.get('status', 'idle'),
+        'current': progress.get('current', 0),
+        'total': progress.get('total', 0),
+        'message': progress.get('message', ''),
+        'current_group': progress.get('current_group', ''),
+        'sent_count': task.get('sent_count', 0),
+        'error_count': task.get('error_count', 0),
+        'blocked_count': task.get('blocked_count', 0),
+        'skipped_count': task.get('skipped_count', 0)
+    }
+    
+    # Добавляем последний лог
+    logs = task.get('logs', [])
+    if logs:
+        response['last_log'] = logs[-1]
+    
+    # Если завершено, добавляем файл отчета
+    if task.get('status') == 'completed':
+        response['report_file'] = task.get('report_file')
+    
+    return jsonify(response)
+
+def run_sending_async(session_id, filename, message_text, message_limit, send_delay, photo_path, video_path, api_id, api_hash, stop_event):
+    """Запуск рассылки в отдельном потоке"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        loop.run_until_complete(
+            send_messages_to_groups(session_id, filename, message_text, message_limit, send_delay, photo_path, video_path, api_id, api_hash, stop_event)
+        )
+    except Exception as e:
+        app.logger.error(f"Ошибка в run_sending_async: {e}", exc_info=True)
+        if session_id in sending_tasks:
+            sending_tasks[session_id]['status'] = 'error'
+            sending_tasks[session_id]['progress']['message'] = f'Ошибка: {str(e)}'
+    finally:
+        loop.close()
+
+async def send_messages_to_groups(session_id, filename, message_text, message_limit, send_delay, photo_path, video_path, api_id, api_hash, stop_event):
+    """Асинхронная функция рассылки сообщений"""
+    try:
+        # Используем уникальное имя сессии для каждой рассылки, чтобы избежать блокировки БД
+        # Копируем основную сессию, если она существует, с повторными попытками
+        main_session_path = 'telegram_session.session'
+        session_name = f'telegram_session_{session_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+        
+        if os.path.exists(main_session_path):
+            import shutil
+            import time
+            session_copy_path = f'{session_name}.session'
+            
+            # Пробуем скопировать сессию с повторными попытками
+            for attempt in range(3):
+                try:
+                    # Небольшая задержка перед копированием
+                    await asyncio.sleep(0.5)
+                    shutil.copy2(main_session_path, session_copy_path)
+                    app.logger.info(f"📋 Использую копию сессии: {session_name}")
+                    break
+                except Exception as e:
+                    if attempt < 2:
+                        app.logger.warning(f"⚠️ Попытка {attempt + 1} копирования сессии не удалась: {e}, повторяю...")
+                        await asyncio.sleep(1)
+                    else:
+                        app.logger.warning(f"⚠️ Не удалось скопировать сессию после 3 попыток: {e}, использую новую сессию")
+        
+        searcher = TelegramSearcher(api_id, api_hash, session_name, send_delay)
+        
+        # Пробуем подключиться с таймаутом и повторными попытками
+        connected = False
+        for attempt in range(3):
+            try:
+                await asyncio.wait_for(searcher.client.start(), timeout=30.0)
+                connected = True
+                app.logger.info(f"✅ Успешно подключено к Telegram (попытка {attempt + 1})")
+                break
+            except asyncio.TimeoutError:
+                if attempt < 2:
+                    app.logger.warning(f"⏳ Таймаут подключения (попытка {attempt + 1}), повторяю...")
+                    await asyncio.sleep(2)
+                else:
+                    sending_tasks[session_id]['status'] = 'error'
+                    sending_tasks[session_id]['progress']['message'] = 'Таймаут подключения к Telegram после 3 попыток'
+                    return
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'database is locked' in error_msg and attempt < 2:
+                    app.logger.warning(f"⏳ БД заблокирована (попытка {attempt + 1}), жду и повторяю...")
+                    await asyncio.sleep(3)
+                else:
+                    app.logger.error(f"Ошибка подключения к Telegram: {e}")
+                    sending_tasks[session_id]['status'] = 'error'
+                    sending_tasks[session_id]['progress']['message'] = f'Ошибка подключения: {str(e)}'
+                    return
+        
+        if not connected:
+            sending_tasks[session_id]['status'] = 'error'
+            sending_tasks[session_id]['progress']['message'] = 'Не удалось подключиться к Telegram'
+            return
+        
+        # Читаем группы из файла
+        file_path = os.path.join('results', filename)
+        groups = TelegramSearcher.read_groups_from_excel(file_path)
+        
+        if not groups:
+            sending_tasks[session_id]['status'] = 'error'
+            sending_tasks[session_id]['progress']['message'] = 'Не удалось прочитать группы из файла. Проверьте формат файла.'
+            app.logger.error(f"❌ Не удалось прочитать группы из файла: {file_path}")
+            # Пробуем прочитать файл еще раз с детальным логированием
+            try:
+                from openpyxl import load_workbook
+                wb = load_workbook(file_path)
+                ws = wb.active
+                app.logger.info(f"📄 Файл существует, строк: {ws.max_row}, колонок: {ws.max_column}")
+                if ws.max_row > 1:
+                    headers = [cell.value for cell in ws[1]]
+                    app.logger.info(f"📋 Заголовки: {headers}")
+                    for i, row in enumerate(ws.iter_rows(min_row=2, max_row=min(5, ws.max_row), values_only=True)):
+                        app.logger.info(f"  Строка {i+2}: {row}")
+            except Exception as e:
+                app.logger.error(f"❌ Ошибка при детальной проверке файла: {e}")
+            return
+        
+        app.logger.info(f"📋 Прочитано {len(groups)} групп из файла: {filename}")
+        
+        # Логируем первую группу для отладки
+        if groups:
+            first_group = groups[0]
+            app.logger.info(f"🔍 Первая группа: id={first_group.get('id')}, username={first_group.get('username')}, title={first_group.get('title')}")
+        
+        # Обновляем прогресс
+        total_groups = min(len(groups), message_limit)
+        sending_tasks[session_id]['progress'] = {
+            'current': 0,
+            'total': total_groups,
+            'message': f'Начинаю рассылку в {total_groups} групп...',
+            'current_group': ''
+        }
+        
+        sent_count = 0
+        error_count = 0
+        blocked_count = 0
+        skipped_count = 0
+        results = []
+        
+        for i, group in enumerate(groups):
+            if stop_event and stop_event.is_set():
+                sending_tasks[session_id]['status'] = 'stopped'
+                sending_tasks[session_id]['progress']['message'] = 'Рассылка остановлена пользователем'
+                break
+            
+            # Проверяем лимит
+            if sent_count + error_count >= message_limit:
+                sending_tasks[session_id]['progress']['message'] = f'Достигнут лимит сообщений ({message_limit})'
+                break
+            
+            group_title = group.get('title', f"ID: {group.get('id')}")
+            group_id = group.get('id')
+            username = group.get('username')
+            
+            # Логируем информацию о группе
+            app.logger.info(f"📤 Обрабатываю группу: id={group_id}, username={username}, title={group_title}")
+            
+            # Обновляем прогресс
+            sending_tasks[session_id]['progress'] = {
+                'current': i + 1,
+                'total': total_groups,
+                'message': f'Отправляю в: {group_title}',
+                'current_group': group_title
+            }
+            
+            # Добавляем лог
+            log_entry = {'message': f'Отправляю в: {group_title}', 'type': 'info'}
+            sending_tasks[session_id]['logs'].append(log_entry)
+            if len(sending_tasks[session_id]['logs']) > 100:
+                sending_tasks[session_id]['logs'].pop(0)
+            
+            try:
+                # Отправляем сообщение
+                result = await searcher.send_message_to_group(
+                    group_id, username, group_title, message_text, photo_path, video_path
+                )
+                
+                if result['success']:
+                    sent_count += 1
+                    log_entry = {'message': f'✅ Отправлено в: {group_title}', 'type': 'success'}
+                    results.append({
+                        **group,
+                        'status': 'sent',
+                        'message': 'Сообщение отправлено успешно',
+                        'timestamp': datetime.now().isoformat()
+                    })
+                elif result.get('blocked'):
+                    blocked_count += 1
+                    log_entry = {'message': f'🚫 Заблокировано: {group_title} - {result.get("message", "")}', 'type': 'error'}
+                    results.append({
+                        **group,
+                        'status': 'blocked',
+                        'message': result.get('message', 'Заблокировано'),
+                        'timestamp': datetime.now().isoformat()
+                    })
+                else:
+                    error_count += 1
+                    log_entry = {'message': f'❌ Ошибка в {group_title}: {result.get("message", "")}', 'type': 'error'}
+                    results.append({
+                        **group,
+                        'status': 'error',
+                        'message': result.get('message', 'Ошибка отправки'),
+                        'timestamp': datetime.now().isoformat()
+                    })
+                
+                sending_tasks[session_id]['logs'].append(log_entry)
+                if len(sending_tasks[session_id]['logs']) > 100:
+                    sending_tasks[session_id]['logs'].pop(0)
+                
+            except Exception as e:
+                error_count += 1
+                error_msg = str(e)
+                log_entry = {'message': f'❌ Исключение в {group_title}: {error_msg}', 'type': 'error'}
+                sending_tasks[session_id]['logs'].append(log_entry)
+                if len(sending_tasks[session_id]['logs']) > 100:
+                    sending_tasks[session_id]['logs'].pop(0)
+                
+                results.append({
+                    **group,
+                    'status': 'error',
+                    'message': error_msg,
+                    'timestamp': datetime.now().isoformat()
+                })
+            
+            # Обновляем счетчики
+            sending_tasks[session_id]['sent_count'] = sent_count
+            sending_tasks[session_id]['error_count'] = error_count
+            sending_tasks[session_id]['blocked_count'] = blocked_count
+            sending_tasks[session_id]['skipped_count'] = skipped_count
+            
+            # Задержка между отправками
+            if i < len(groups) - 1:
+                await asyncio.sleep(send_delay)
+        
+        # Сохраняем отчет
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_filename = f'sending_report_{timestamp}.xlsx'
+        report_file = os.path.join('results', report_filename)
+        
+        searcher.save_sending_report(results, report_file, sent_count, error_count, blocked_count, skipped_count)
+        
+        # Завершаем
+        sending_tasks[session_id]['status'] = 'completed'
+        sending_tasks[session_id]['progress'] = {
+            'current': total_groups,
+            'total': total_groups,
+            'message': 'Рассылка завершена',
+            'current_group': ''
+        }
+        sending_tasks[session_id]['report_file'] = report_filename
+        
+        await searcher.disconnect()
+        
+        # Удаляем временную копию сессии
+        session_copy_path = f'{session_name}.session'
+        if os.path.exists(session_copy_path):
+            try:
+                os.remove(session_copy_path)
+                app.logger.info(f"🗑️ Удалена временная сессия: {session_copy_path}")
+            except Exception as e:
+                app.logger.warning(f"⚠️ Не удалось удалить временную сессию: {e}")
+        
+        # Удаляем загруженные файлы
+        if photo_path and os.path.exists(photo_path):
+            os.remove(photo_path)
+        if video_path and os.path.exists(video_path):
+            os.remove(video_path)
+        
+    except Exception as e:
+        app.logger.error(f"Ошибка в send_messages_to_groups: {e}", exc_info=True)
+        if session_id in sending_tasks:
+            sending_tasks[session_id]['status'] = 'error'
+            sending_tasks[session_id]['progress']['message'] = f'Ошибка: {str(e)}'
 
 if __name__ == '__main__':
     print("🚀 Запуск Flask приложения...")

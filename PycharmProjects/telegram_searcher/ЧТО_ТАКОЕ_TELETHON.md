@@ -145,3 +145,5 @@ print(group.participants_count)  # Количество участников
 
 
 
+
+

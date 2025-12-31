@@ -16,3 +16,5 @@ echo "Сервер запущен"
 echo "Логи: tail -f /tmp/flask_output.log"
 echo "Остановить: pkill -f 'python.*app.py'"
 
+
+

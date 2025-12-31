@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📨 Рассылка сообщений - Telegram Searcher</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .back-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+            padding: 8px 16px;
+            border-radius: 6px;
+            background: #f0f0f0;
+            transition: all 0.3s;
+        }
+        
+        .back-link:hover {
+            background: #e0e0e0;
+        }
+        
+        .section {
+            background: #f9f9f9;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .section h2 {
+            color: #555;
+            margin-bottom: 15px;
+            font-size: 20px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+        
+        input[type="text"],
+        input[type="number"],
+        input[type="file"],
+        textarea,
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+        
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+        
+        .file-info {
+            margin-top: 8px;
+            padding: 8px;
+            background: #e8f5e9;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #2e7d32;
+        }
+        
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:hover:not(:disabled) {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .danger {
+            background: #f44336;
+        }
+        
+        .danger:hover:not(:disabled) {
+            background: #d32f2f;
+        }
+        
+        .success {
+            background: #4CAF50;
+        }
+        
+        .success:hover:not(:disabled) {
+            background: #45a049;
+        }
+        
+        .progress-section {
+            display: none;
+            margin-top: 20px;
+        }
+        
+        .progress-bar-container {
+            background: #f0f0f0;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+        
+        .progress-bar {
+            background: #ddd;
+            border-radius: 4px;
+            height: 30px;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .progress-fill {
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .results-section {
+            display: none;
+            margin-top: 20px;
+        }
+        
+        .log-container {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 6px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin-top: 15px;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 4px 0;
+        }
+        
+        .log-success { color: #4ec9b0; }
+        .log-error { color: #f48771; }
+        .log-warning { color: #dcdcaa; }
+        .log-info { color: #569cd6; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-link">← Назад к главной</a>
+        <h1>📨 Рассылка сообщений</h1>
+        <p style="color: #666; margin-bottom: 30px;">Отправка сообщений в группы из файла ready_groups</p>
+        
+        <!-- Настройки рассылки -->
+        <div class="section">
+            <h2>⚙️ Настройки рассылки</h2>
+            
+            <div class="form-group">
+                <label>📁 Источник групп для рассылки:</label>
+                
+                <!-- Вариант 1: Файл -->
+                <div style="margin-bottom: 15px;">
+                    <label style="font-size: 14px; color: #666; display: block; margin-bottom: 8px;">Вариант 1: Файл с группами</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div>
+                            <label style="font-size: 13px; color: #666;">Выбрать из существующих:</label>
+                            <select id="groupsFile" style="width: 100%;">
+                                <option value="">Загрузка файлов...</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size: 13px; color: #666;">Или загрузить свой файл:</label>
+                            <input type="file" id="uploadGroupsFile" accept=".xlsx,.xls" style="width: 100%;">
+                            <div id="uploadedFileInfo" class="file-info" style="display: none; margin-top: 8px;"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Вариант 2: Текстовое поле -->
+                <div style="margin-bottom: 15px;">
+                    <label style="font-size: 14px; color: #666; display: block; margin-bottom: 8px;">Вариант 2: Вставить список аккаунтов (каждый с новой строки)</label>
+                    <textarea id="groupsText" placeholder="Вставьте список username или ID групп, каждый с новой строки:&#10;@group1&#10;@group2&#10;group3&#10;123456789" style="min-height: 120px; font-family: monospace; font-size: 13px;"></textarea>
+                    <div id="groupsTextInfo" class="file-info" style="display: none; margin-top: 8px;"></div>
+                    <small style="color: #666; display: block; margin-top: 5px;">
+                        💡 Формат: @username или просто username или ID группы. Каждый аккаунт с новой строки. Можно копировать список из любого источника.
+                    </small>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="messageText">💬 Текст сообщения:</label>
+                <textarea id="messageText" placeholder="Введите текст сообщения для рассылки..."></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="photoFile">📷 Фото (опционально):</label>
+                <input type="file" id="photoFile" accept="image/*">
+                <div id="photoInfo" class="file-info" style="display: none;"></div>
+            </div>
+            
+            <div class="form-group">
+                <label for="videoFile">🎥 Видео (опционально):</label>
+                <input type="file" id="videoFile" accept="video/*">
+                <div id="videoInfo" class="file-info" style="display: none;"></div>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div class="form-group">
+                    <label for="messageLimit">🔢 Лимит сообщений (общий):</label>
+                    <input type="number" id="messageLimit" min="1" value="50" placeholder="50">
+                    <small style="color: #666; display: block; margin-top: 5px;">Максимальное количество сообщений для отправки</small>
+                </div>
+                
+                <div class="form-group">
+                    <label for="sendDelay">⏱️ Задержка между отправками (секунды):</label>
+                    <input type="number" id="sendDelay" min="1" value="5" step="0.5" placeholder="5">
+                    <small style="color: #666; display: block; margin-top: 5px;">Пауза между отправкой сообщений</small>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 15px; margin-top: 20px;">
+                <button id="startSendingBtn" class="success" onclick="startSending()" style="flex: 1;">
+                    🚀 Начать рассылку
+                </button>
+                <button id="stopSendingBtn" class="danger" onclick="stopSending()" style="flex: 1;" disabled>
+                    ⏹ Остановить рассылку
+                </button>
+            </div>
+        </div>
+        
+        <!-- Прогресс рассылки -->
+        <div class="section progress-section" id="progressSection">
+            <h2>📊 Прогресс рассылки</h2>
+            
+            <div class="progress-bar-container">
+                <div class="progress-info">
+                    <span>Прогресс:</span>
+                    <span id="progressText">0 / 0</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill">0%</div>
+                </div>
+            </div>
+            
+            <div id="currentStatus" style="color: #666; margin-top: 10px; font-size: 14px;"></div>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="sentCount">0</div>
+                    <div class="stat-label">✅ Отправлено</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="errorCount">0</div>
+                    <div class="stat-label">❌ Ошибки</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="blockedCount">0</div>
+                    <div class="stat-label">🚫 Заблокировано</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="skippedCount">0</div>
+                    <div class="stat-label">⏭️ Пропущено</div>
+                </div>
+            </div>
+            
+            <div class="log-container" id="logContainer"></div>
+        </div>
+        
+        <!-- Результаты -->
+        <div class="section results-section" id="resultsSection">
+            <h2>📋 Результаты рассылки</h2>
+            <div id="resultsContent"></div>
+        </div>
+    </div>
+    
+    <script>
+        let sendingInterval = null;
+        let sendingStopFlag = false;
+        
+        // Загрузка списка файлов при загрузке страницы
+        window.onload = function() {
+            loadReadyGroupsFiles();
+            
+            // Обработчики для файлов
+            document.getElementById('photoFile').addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    document.getElementById('photoInfo').style.display = 'block';
+                    document.getElementById('photoInfo').textContent = `📷 ${file.name} (${(file.size / 1024).toFixed(2)} KB)`;
+                } else {
+                    document.getElementById('photoInfo').style.display = 'none';
+                }
+            });
+            
+            document.getElementById('videoFile').addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    document.getElementById('videoInfo').style.display = 'block';
+                    document.getElementById('videoInfo').textContent = `🎥 ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+                } else {
+                    document.getElementById('videoInfo').style.display = 'none';
+                }
+            });
+            
+            // Обработчик загрузки файла с группами
+            document.getElementById('uploadGroupsFile').addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    // Очищаем выбор из списка
+                    document.getElementById('groupsFile').value = '';
+                    
+                    // Показываем информацию о загруженном файле
+                    document.getElementById('uploadedFileInfo').style.display = 'block';
+                    document.getElementById('uploadedFileInfo').textContent = `📁 ${file.name} (${(file.size / 1024).toFixed(2)} KB) - готов к использованию`;
+                } else {
+                    document.getElementById('uploadedFileInfo').style.display = 'none';
+                }
+            });
+            
+            // При выборе из списка очищаем загруженный файл и текстовое поле
+            document.getElementById('groupsFile').addEventListener('change', function(e) {
+                if (e.target.value) {
+                    document.getElementById('uploadGroupsFile').value = '';
+                    document.getElementById('uploadedFileInfo').style.display = 'none';
+                    document.getElementById('groupsText').value = '';
+                    document.getElementById('groupsTextInfo').style.display = 'none';
+                }
+            });
+            
+            // При загрузке файла очищаем выбор из списка и текстовое поле
+            document.getElementById('uploadGroupsFile').addEventListener('change', function(e) {
+                if (e.target.files[0]) {
+                    document.getElementById('groupsFile').value = '';
+                    document.getElementById('groupsText').value = '';
+                    document.getElementById('groupsTextInfo').style.display = 'none';
+                }
+            });
+            
+            // При вводе текста очищаем выбор файлов
+            document.getElementById('groupsText').addEventListener('input', function(e) {
+                const text = e.target.value.trim();
+                if (text) {
+                    document.getElementById('groupsFile').value = '';
+                    document.getElementById('uploadGroupsFile').value = '';
+                    document.getElementById('uploadedFileInfo').style.display = 'none';
+                    
+                    // Подсчитываем количество аккаунтов
+                    const lines = text.split('\n').filter(line => line.trim().length > 0);
+                    const count = lines.length;
+                    document.getElementById('groupsTextInfo').style.display = 'block';
+                    document.getElementById('groupsTextInfo').textContent = `📋 Найдено аккаунтов: ${count}`;
+                } else {
+                    document.getElementById('groupsTextInfo').style.display = 'none';
+                }
+            });
+        };
+        
+        function loadReadyGroupsFiles() {
+            fetch('/api/get_files')
+                .then(r => r.json())
+                .then(data => {
+                    const select = document.getElementById('groupsFile');
+                    select.innerHTML = '<option value="">Выберите файл...</option>';
+                    
+                    // Используем file_names если доступно, иначе files
+                    let fileList = data.file_names || (data.files ? data.files.map(f => typeof f === 'string' ? f : f.name) : []);
+                    
+                    if (!fileList || fileList.length === 0) {
+                        select.innerHTML = '<option value="">Файлы не найдены</option>';
+                        return;
+                    }
+                    
+                    // Фильтруем только ready_groups файлы
+                    const readyFiles = fileList.filter(fileName => 
+                        fileName.includes('ready_groups') || fileName.includes('all_ready_groups')
+                    );
+                    
+                    if (readyFiles.length === 0) {
+                        select.innerHTML = '<option value="">Файлы ready_groups не найдены</option>';
+                        return;
+                    }
+                    
+                    readyFiles.forEach(fileName => {
+                        const option = document.createElement('option');
+                        option.value = fileName;
+                        option.textContent = fileName;
+                        select.appendChild(option);
+                    });
+                })
+                .catch(err => {
+                    console.error('Ошибка загрузки файлов:', err);
+                    document.getElementById('groupsFile').innerHTML = '<option value="">Ошибка загрузки файлов</option>';
+                });
+        }
+        
+        function startSending() {
+            const filename = document.getElementById('groupsFile').value;
+            const uploadedFile = document.getElementById('uploadGroupsFile').files[0];
+            const groupsText = document.getElementById('groupsText').value.trim();
+            const messageText = document.getElementById('messageText').value.trim();
+            const messageLimit = parseInt(document.getElementById('messageLimit').value) || 50;
+            const sendDelay = parseFloat(document.getElementById('sendDelay').value) || 5;
+            const photoFile = document.getElementById('photoFile').files[0];
+            const videoFile = document.getElementById('videoFile').files[0];
+            
+            // Проверяем, что выбран хотя бы один источник групп
+            if (!filename && !uploadedFile && !groupsText) {
+                alert('Выберите файл с группами, загрузите свой файл или вставьте список аккаунтов!');
+                return;
+            }
+            
+            if (!messageText && !photoFile && !videoFile) {
+                alert('Введите текст сообщения или загрузите фото/видео!');
+                return;
+            }
+            
+            // Формируем FormData для отправки файлов
+            const formData = new FormData();
+            if (filename) {
+                formData.append('filename', filename);
+            }
+            if (uploadedFile) {
+                formData.append('uploaded_file', uploadedFile);
+            }
+            if (groupsText) {
+                formData.append('groups_text', groupsText);
+            }
+            formData.append('message_text', messageText);
+            formData.append('message_limit', messageLimit);
+            formData.append('send_delay', sendDelay);
+            if (photoFile) formData.append('photo', photoFile);
+            if (videoFile) formData.append('video', videoFile);
+            
+            // Блокируем кнопки
+            document.getElementById('startSendingBtn').disabled = true;
+            document.getElementById('stopSendingBtn').disabled = false;
+            document.getElementById('progressSection').style.display = 'block';
+            document.getElementById('resultsSection').style.display = 'none';
+            sendingStopFlag = false;
+            
+            // Очищаем логи
+            document.getElementById('logContainer').innerHTML = '';
+            addLog('🚀 Начинаю рассылку...', 'info');
+            
+            // Отправляем запрос на начало рассылки
+            fetch('/api/start_sending', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    addLog('✅ Рассылка запущена', 'success');
+                    startStatusPolling();
+                } else {
+                    alert('Ошибка: ' + (data.message || 'Неизвестная ошибка'));
+                    resetButtons();
+                }
+            })
+            .catch(err => {
+                console.error('Ошибка:', err);
+                alert('Ошибка при запуске рассылки: ' + err.message);
+                resetButtons();
+            });
+        }
+        
+        function stopSending() {
+            if (confirm('Вы уверены, что хотите остановить рассылку?')) {
+                sendingStopFlag = true;
+                fetch('/api/stop_sending', {method: 'POST'})
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            addLog('⏹ Рассылка остановлена пользователем', 'warning');
+                        }
+                    });
+            }
+        }
+        
+        function startStatusPolling() {
+            if (sendingInterval) clearInterval(sendingInterval);
+            
+            sendingInterval = setInterval(() => {
+                if (sendingStopFlag) {
+                    clearInterval(sendingInterval);
+                    return;
+                }
+                
+                fetch('/api/sending_status')
+                    .then(r => r.json())
+                    .then(data => {
+                        updateProgress(data);
+                        
+                        if (data.status === 'completed' || data.status === 'error' || data.status === 'stopped') {
+                            clearInterval(sendingInterval);
+                            resetButtons();
+                            
+                            if (data.status === 'completed') {
+                                showResults(data);
+                            }
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Ошибка получения статуса:', err);
+                    });
+            }, 2000); // Проверяем каждые 2 секунды
+        }
+        
+        function updateProgress(data) {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            const currentStatus = document.getElementById('currentStatus');
+            
+            if (data.total && data.current !== undefined) {
+                const percent = Math.round((data.current / data.total) * 100);
+                progressFill.style.width = percent + '%';
+                progressFill.textContent = percent + '%';
+                progressText.textContent = `${data.current} / ${data.total} (${percent}%)`;
+            }
+            
+            if (data.current_group) {
+                currentStatus.textContent = `Отправляю в: ${data.current_group}`;
+            }
+            
+            // Обновляем статистику
+            document.getElementById('sentCount').textContent = data.sent_count || 0;
+            document.getElementById('errorCount').textContent = data.error_count || 0;
+            document.getElementById('blockedCount').textContent = data.blocked_count || 0;
+            document.getElementById('skippedCount').textContent = data.skipped_count || 0;
+            
+            // Добавляем логи
+            if (data.last_log) {
+                addLog(data.last_log.message, data.last_log.type || 'info');
+            }
+        }
+        
+        function showResults(data) {
+            document.getElementById('resultsSection').style.display = 'block';
+            
+            const resultsHTML = `
+                <p><strong>✅ Рассылка завершена!</strong></p>
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-top: 15px;">
+                    <div style="background: #e8f5e9; padding: 15px; border-radius: 4px;">
+                        <strong>✅ Отправлено успешно:</strong> ${data.sent_count || 0}
+                    </div>
+                    <div style="background: #ffebee; padding: 15px; border-radius: 4px;">
+                        <strong>❌ Ошибки:</strong> ${data.error_count || 0}
+                    </div>
+                    <div style="background: #fff3e0; padding: 15px; border-radius: 4px;">
+                        <strong>🚫 Заблокировано:</strong> ${data.blocked_count || 0}
+                    </div>
+                    <div style="background: #f3e5f5; padding: 15px; border-radius: 4px;">
+                        <strong>⏭️ Пропущено:</strong> ${data.skipped_count || 0}
+                    </div>
+                </div>
+                ${data.report_file ? `
+                    <p style="margin-top: 20px;">
+                        <button onclick="downloadFile('${data.report_file}')" class="success" style="padding: 15px 30px; font-size: 16px;">
+                            📥 Скачать отчет: ${data.report_file}
+                        </button>
+                    </p>
+                ` : ''}
+            `;
+            
+            document.getElementById('resultsContent').innerHTML = resultsHTML;
+        }
+        
+        function resetButtons() {
+            document.getElementById('startSendingBtn').disabled = false;
+            document.getElementById('stopSendingBtn').disabled = true;
+        }
+        
+        function addLog(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        function downloadFile(filename) {
+            window.location.href = `/api/download/${filename}`;
+        }
+    </script>
+</body>
+</html>
+
+
