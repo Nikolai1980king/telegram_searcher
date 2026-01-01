@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📋 Объединение файлов - Telegram Searcher</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .back-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+            padding: 8px 16px;
+            border-radius: 6px;
+            background: #f0f0f0;
+            transition: all 0.3s;
+        }
+        
+        .back-link:hover {
+            background: #e0e0e0;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 20px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+        
+        input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            border: 2px dashed #667eea;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        input[type="file"]:hover {
+            border-color: #5568d3;
+            background: #f5f5ff;
+        }
+        
+        .file-list {
+            margin-top: 10px;
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            border: 1px solid #e0e0e0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .file-item {
+            padding: 8px;
+            margin-bottom: 5px;
+            background: #f0f0f0;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .file-item:last-child {
+            margin-bottom: 0;
+        }
+        
+        .remove-file {
+            background: #ff4444;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        .remove-file:hover {
+            background: #cc0000;
+        }
+        
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 100%;
+        }
+        
+        .btn:hover:not(:disabled) {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .info-box {
+            padding: 15px;
+            background: #e3f2fd;
+            border-left: 4px solid #2196F3;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        
+        .info-box strong {
+            color: #1976D2;
+        }
+        
+        .result-box {
+            padding: 20px;
+            background: #e8f5e9;
+            border-left: 4px solid #4CAF50;
+            border-radius: 4px;
+            margin-top: 20px;
+            display: none;
+        }
+        
+        .result-box.error {
+            background: #ffebee;
+            border-left-color: #f44336;
+        }
+        
+        .result-box h3 {
+            color: #2e7d32;
+            margin-bottom: 10px;
+        }
+        
+        .result-box.error h3 {
+            color: #c62828;
+        }
+        
+        .download-btn {
+            display: inline-block;
+            margin-top: 15px;
+            padding: 12px 24px;
+            background: #4CAF50;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+        
+        .download-btn:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .stat-item {
+            padding: 15px;
+            background: white;
+            border-radius: 6px;
+            text-align: center;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-link">← Назад на главную</a>
+        
+        <h1>📋 Объединение файлов с удалением дубликатов</h1>
+        
+        <div class="info-box">
+            <strong>💡 Как это работает:</strong><br>
+            1. Загрузите один или несколько Excel файлов с группами<br>
+            2. Нажмите "Проверить на дубликаты и объединить"<br>
+            3. Программа автоматически удалит повторяющиеся аккаунты (по ID и username)<br>
+            4. Скачайте объединенный файл без дубликатов
+        </div>
+        
+        <div class="section">
+            <h2>📁 Загрузка файлов</h2>
+            <div class="form-group">
+                <label>Выберите файлы для объединения (можно несколько):</label>
+                <input type="file" id="filesInput" accept=".xlsx,.xls" multiple>
+                <div id="fileList" class="file-list" style="display: none;"></div>
+            </div>
+            
+            <button class="btn" id="mergeBtn" onclick="mergeFiles()" disabled>
+                🔍 Проверить на дубликаты и объединить
+            </button>
+        </div>
+        
+        <div id="resultBox" class="result-box">
+            <h3 id="resultTitle">Результат</h3>
+            <div id="resultContent"></div>
+            <div id="resultStats" class="stats"></div>
+            <a id="downloadLink" class="download-btn" href="#" download style="display: none;">
+                📥 Скачать объединенный файл
+            </a>
+        </div>
+    </div>
+    
+    <script>
+        let selectedFiles = [];
+        
+        document.getElementById('filesInput').addEventListener('change', function(e) {
+            const files = Array.from(e.target.files);
+            selectedFiles = files;
+            
+            const fileListDiv = document.getElementById('fileList');
+            const mergeBtn = document.getElementById('mergeBtn');
+            
+            if (files.length > 0) {
+                fileListDiv.style.display = 'block';
+                fileListDiv.innerHTML = '';
+                
+                files.forEach((file, index) => {
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'file-item';
+                    fileItem.innerHTML = `
+                        <span>${file.name} (${(file.size / 1024).toFixed(2)} KB)</span>
+                    `;
+                    fileListDiv.appendChild(fileItem);
+                });
+                
+                mergeBtn.disabled = false;
+            } else {
+                fileListDiv.style.display = 'none';
+                mergeBtn.disabled = true;
+            }
+        });
+        
+        function mergeFiles() {
+            if (selectedFiles.length === 0) {
+                alert('Пожалуйста, выберите файлы для объединения');
+                return;
+            }
+            
+            const formData = new FormData();
+            selectedFiles.forEach(file => {
+                formData.append('files', file);
+            });
+            
+            const mergeBtn = document.getElementById('mergeBtn');
+            const resultBox = document.getElementById('resultBox');
+            const resultTitle = document.getElementById('resultTitle');
+            const resultContent = document.getElementById('resultContent');
+            const resultStats = document.getElementById('resultStats');
+            const downloadLink = document.getElementById('downloadLink');
+            
+            mergeBtn.disabled = true;
+            mergeBtn.textContent = '⏳ Обработка...';
+            resultBox.style.display = 'none';
+            
+            fetch('/api/merge_uploaded_files', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                mergeBtn.disabled = false;
+                mergeBtn.textContent = '🔍 Проверить на дубликаты и объединить';
+                
+                if (data.success) {
+                    resultBox.classList.remove('error');
+                    resultBox.style.display = 'block';
+                    resultTitle.textContent = '✅ Файлы успешно объединены!';
+                    resultContent.innerHTML = `
+                        <p><strong>Объединено файлов:</strong> ${data.files_count}</p>
+                        <p><strong>Результат сохранен в:</strong> ${data.result_file}</p>
+                    `;
+                    
+                    resultStats.innerHTML = `
+                        <div class="stat-item">
+                            <div class="stat-label">Было групп</div>
+                            <div class="stat-value">${data.total_before}</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Стало групп</div>
+                            <div class="stat-value">${data.total_after}</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Удалено дубликатов</div>
+                            <div class="stat-value" style="color: #f44336;">${data.duplicates_removed}</div>
+                        </div>
+                    `;
+                    
+                    downloadLink.href = `/api/download/${data.result_file}`;
+                    downloadLink.style.display = 'inline-block';
+                } else {
+                    resultBox.classList.add('error');
+                    resultBox.style.display = 'block';
+                    resultTitle.textContent = '❌ Ошибка';
+                    resultContent.innerHTML = `<p>${data.message || 'Произошла ошибка при объединении файлов'}</p>`;
+                    resultStats.innerHTML = '';
+                    downloadLink.style.display = 'none';
+                }
+            })
+            .catch(error => {
+                mergeBtn.disabled = false;
+                mergeBtn.textContent = '🔍 Проверить на дубликаты и объединить';
+                resultBox.classList.add('error');
+                resultBox.style.display = 'block';
+                resultTitle.textContent = '❌ Ошибка';
+                resultContent.innerHTML = `<p>Ошибка соединения: ${error.message}</p>`;
+                resultStats.innerHTML = '';
+                downloadLink.style.display = 'none';
+            });
+        }
+    </script>
+</body>
+</html>

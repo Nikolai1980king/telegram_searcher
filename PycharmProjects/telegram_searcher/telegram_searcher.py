@@ -723,38 +723,62 @@ class TelegramSearcher:
                     # Если другая ошибка, пробуем другие методы
                     print(f"⚠️ [{title}] GetParticipantRequest ошибка: {e}, пробую другие методы...")
             
-            # Метод 2: Проверяем через iter_participants (ищем себя в списке)
+            # Метод 2: Проверяем через iter_participants (ищем себя в списке) с таймаутом
             try:
                 found_self = False
-                async for user in self.client.iter_participants(entity, limit=200):
-                    if user.id == me.id:
-                        found_self = True
-                        break
+                # Добавляем таймаут 30 секунд для больших групп
+                try:
+                    async def check_participants():
+                        nonlocal found_self
+                        async for user in self.client.iter_participants(entity, limit=100):  # Уменьшаем лимит для скорости
+                            if user.id == me.id:
+                                found_self = True
+                                return
+                    
+                    await asyncio.wait_for(check_participants(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    print(f"⏱️ [{title}] Таймаут при проверке участников (группа слишком большая или медленная), пропускаю этот метод")
+                    # Пропускаем этот метод, переходим к следующему
+                    pass
+                except Exception as e:
+                    raise e
+                
                 if found_self:
                     print(f"✅ [{title}] Найден в списке участников через iter_participants: УЧАСТНИК")
                     return True
-                else:
-                    print(f"❌ [{title}] НЕ найден в списке участников через iter_participants: НЕ участник")
-                    return False
+                # Если не нашли и не было таймаута - продолжаем к следующему методу
+                print(f"❌ [{title}] НЕ найден в списке участников через iter_participants, пробую следующий метод...")
             except Exception as e:
                 error_msg = str(e).lower()
                 if 'not a member' in error_msg or 'not participant' in error_msg:
-                    print(f"❌ [{title}] iter_participants ошибка: НЕ участник")
-                    return False
-                print(f"⚠️ [{title}] iter_participants ошибка: {e}")
+                    print(f"❌ [{title}] iter_participants ошибка: НЕ участник, пробую следующий метод...")
+                    # Продолжаем к следующему методу
+                    pass
+                else:
+                    print(f"⚠️ [{title}] iter_participants ошибка: {e}, пробую следующий метод...")
             
             # Метод 3: Для каналов - проверяем через GetFullChannelRequest (может не работать для не-участников)
             if isinstance(entity, Channel):
                 try:
                     full_info = await self.client(GetFullChannelRequest(entity))
                     # Если получили без ошибок, но не уверены - проверяем через диалоги
-                    # Проверяем, есть ли эта группа в наших диалогах
-                    async for dialog in self.client.iter_dialogs():
-                        if dialog.entity.id == entity.id:
-                            print(f"✅ [{title}] Найдена в диалогах: УЧАСТНИК")
+                    # Проверяем, есть ли эта группа в наших диалогах (с таймаутом)
+                    try:
+                        async def check_dialogs():
+                            async for dialog in self.client.iter_dialogs(limit=500):  # Ограничиваем для скорости
+                                if dialog.entity.id == entity.id:
+                                    print(f"✅ [{title}] Найдена в диалогах: УЧАСТНИК")
+                                    return True
+                            return False
+                        
+                        found = await asyncio.wait_for(check_dialogs(), timeout=20.0)
+                        if found:
                             return True
-                    print(f"❌ [{title}] НЕ найдена в диалогах: НЕ участник")
-                    return False
+                        print(f"❌ [{title}] НЕ найдена в диалогах: НЕ участник")
+                        return False
+                    except asyncio.TimeoutError:
+                        print(f"⏱️ [{title}] Таймаут при проверке диалогов, пропускаю этот метод")
+                        return False
                 except Exception as e:
                     error_msg = str(e).lower()
                     if 'not a member' in error_msg or 'not participant' in error_msg:
@@ -765,13 +789,23 @@ class TelegramSearcher:
             else:
                 try:
                     full_info = await self.client(GetFullChatRequest(entity.id))
-                    # Проверяем через диалоги
-                    async for dialog in self.client.iter_dialogs():
-                        if dialog.entity.id == entity.id:
-                            print(f"✅ [{title}] Найдена в диалогах: УЧАСТНИК")
+                    # Проверяем через диалоги (с таймаутом)
+                    try:
+                        async def check_dialogs():
+                            async for dialog in self.client.iter_dialogs(limit=500):  # Ограничиваем для скорости
+                                if dialog.entity.id == entity.id:
+                                    print(f"✅ [{title}] Найдена в диалогах: УЧАСТНИК")
+                                    return True
+                            return False
+                        
+                        found = await asyncio.wait_for(check_dialogs(), timeout=20.0)
+                        if found:
                             return True
-                    print(f"❌ [{title}] НЕ найдена в диалогах: НЕ участник")
-                    return False
+                        print(f"❌ [{title}] НЕ найдена в диалогах: НЕ участник")
+                        return False
+                    except asyncio.TimeoutError:
+                        print(f"⏱️ [{title}] Таймаут при проверке диалогов, пропускаю этот метод")
+                        return False
                 except Exception as e:
                     error_msg = str(e).lower()
                     if 'not a member' in error_msg or 'not participant' in error_msg:
@@ -802,7 +836,7 @@ class TelegramSearcher:
                 try:
                     print(f"🔄 [{title}] Отправляю JoinChannelRequest (нажимаю кнопку 'Присоединиться'/'Подать заявку')...")
                     await self.client(JoinChannelRequest(entity))
-                    await asyncio.sleep(max(self.search_delay, 5.0))  # Минимум 5 секунд между вступлениями
+                    await asyncio.sleep(max(self.search_delay, 15.0))  # Минимум 5 секунд между вступлениями
                     
                     # Проверяем строгим методом, вступили ли мы
                     is_member = await self._check_membership_strict(entity, title)
@@ -886,6 +920,68 @@ class TelegramSearcher:
                 return 'request_sent'
             
             return 'none'
+    
+    async def _check_forum_topic_access(self, entity, topic_id: int, topic_title: str, username, parent_group_id, parent_group_title: str) -> Dict:
+        """
+        Проверка доступа к топику форума и возможности отправки сообщений
+        
+        Args:
+            entity: Entity основной группы (Channel)
+            topic_id: ID топика форума
+            topic_title: Название топика (для логов)
+            username: Username основной группы
+            parent_group_id: ID родительской группы
+            parent_group_title: Название родительской группы
+            
+        Returns:
+            Словарь с результатами проверки:
+            {
+                'status': 'ready'/'pending'/'unavailable',
+                'message': 'Описание статуса'
+            }
+        """
+        try:
+            # Проверяем, являемся ли мы участниками основной группы
+            is_member = await self._check_membership_strict(entity, parent_group_title)
+            
+            if not is_member:
+                return {
+                    'status': 'pending',
+                    'message': f'Не участник родительской группы "{parent_group_title}"'
+                }
+            
+            # Если мы участники основной группы, проверяем права на отправку сообщений
+            try:
+                full_info = await self.client(GetFullChannelRequest(entity))
+                
+                # Проверяем, можем ли отправлять сообщения в группу
+                can_send = not getattr(full_info.full_chat, 'default_banned_rights', None) or \
+                          not getattr(full_info.full_chat.default_banned_rights, 'send_messages', False)
+                
+                if can_send:
+                    # Если можем отправлять в группу, значит можем и в топики форума
+                    # (обычно права на топики такие же, как и на основную группу)
+                    return {
+                        'status': 'ready',
+                        'message': f'Готово к рассылке (топик форума "{parent_group_title}")'
+                    }
+                else:
+                    return {
+                        'status': 'pending',
+                        'message': f'Нет прав на отправку сообщений в форум "{parent_group_title}"'
+                    }
+            except Exception as e:
+                # Если не можем проверить права, но мы в группе, считаем готовой
+                # (топики форума обычно имеют те же права, что и основная группа)
+                return {
+                    'status': 'ready',
+                    'message': f'В форуме, права на топик не проверены (предполагается готовность)'
+                }
+        except Exception as e:
+            return {
+                'status': 'pending',
+                'message': f'Ошибка при проверке топика: {str(e)}'
+            }
     
     async def process_pending_groups(self, pending_groups: List[Dict], stop_event=None, progress_callback=None) -> Dict:
         """
@@ -1017,27 +1113,37 @@ class TelegramSearcher:
                         'check_action': 'none'
                     })
                     
-                    # Если это форум и мы участники - обрабатываем темы
+                    # Если это форум и мы участники - проверяем каждую тему отдельно
                     if is_forum and forum_topics:
                         print(f"📚 [{title}] Обрабатываю {len(forum_topics)} тем форума...")
                         for topic in forum_topics:
                             topic_title = f"{title} > {topic['title']}"
-                            print(f"  📝 Обрабатываю тему: {topic_title}")
+                            print(f"  📝 Проверяю тему: {topic_title}")
                             
-                            # Для тем форума проверяем доступ через основную группу
-                            # Если мы в основной группе, то имеем доступ к темам
-                            ready_groups.append({
+                            # Проверяем каждую тему форума отдельно на возможность отправки сообщений
+                            topic_check_result = await self._check_forum_topic_access(
+                                entity, topic['id'], topic_title, username, group_id, title
+                            )
+                            
+                            topic_info = {
                                 'id': topic['id'],
                                 'title': topic_title,
                                 'username': username,  # Username основной группы
                                 'members_count': group.get('members_count', 'N/A'),
                                 'keyword': group.get('keyword', ''),
-                                'check_status': 'ready',
-                                'check_message': f'Доступ через форум "{title}"',
+                                'check_status': topic_check_result['status'],
+                                'check_message': topic_check_result['message'],
                                 'check_action': 'forum_topic',
                                 'parent_group': title,
                                 'parent_group_id': group_id
-                            })
+                            }
+                            
+                            if topic_check_result['status'] == 'ready':
+                                print(f"  ✅ Тема {topic['title']} готова к рассылке")
+                                ready_groups.append(topic_info)
+                            else:
+                                print(f"  ⏳ Тема {topic['title']} в статусе: {topic_check_result['status']}")
+                                still_pending.append(topic_info)
                 else:
                     # Не участник - пытаемся вступить (нажимаем кнопку "Присоединиться" или "Подать заявку")
                     print(f"🔄 [{title}] Пытаюсь вступить (нажимаю кнопку 'Присоединиться'/'Подать заявку')...")
@@ -1057,23 +1163,37 @@ class TelegramSearcher:
                                 'check_action': 'joined'
                             })
                             
-                            # Если это форум и мы вступили - обрабатываем темы
+                            # Если это форум и мы вступили - проверяем каждую тему отдельно
                             if is_forum and forum_topics:
                                 print(f"📚 [{title}] Обрабатываю {len(forum_topics)} тем форума...")
                                 for topic in forum_topics:
                                     topic_title = f"{title} > {topic['title']}"
-                                    ready_groups.append({
+                                    print(f"  📝 Проверяю тему: {topic_title}")
+                                    
+                                    # Проверяем каждую тему форума отдельно на возможность отправки сообщений
+                                    topic_check_result = await self._check_forum_topic_access(
+                                        entity, topic['id'], topic_title, username, group_id, title
+                                    )
+                                    
+                                    topic_info = {
                                         'id': topic['id'],
                                         'title': topic_title,
                                         'username': username,
                                         'members_count': group.get('members_count', 'N/A'),
                                         'keyword': group.get('keyword', ''),
-                                        'check_status': 'ready',
-                                        'check_message': f'Доступ через форум "{title}"',
+                                        'check_status': topic_check_result['status'],
+                                        'check_message': topic_check_result['message'],
                                         'check_action': 'forum_topic',
                                         'parent_group': title,
                                         'parent_group_id': group_id
-                                    })
+                                    }
+                                    
+                                    if topic_check_result['status'] == 'ready':
+                                        print(f"  ✅ Тема {topic['title']} готова к рассылке")
+                                        ready_groups.append(topic_info)
+                                    else:
+                                        print(f"  ⏳ Тема {topic['title']} в статусе: {topic_check_result['status']}")
+                                        still_pending.append(topic_info)
                         else:
                             print(f"⏳ [{title}] Вступление не подтверждено, оставляю в pending")
                             still_pending.append({

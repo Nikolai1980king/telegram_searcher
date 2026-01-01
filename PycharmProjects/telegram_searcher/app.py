@@ -934,11 +934,20 @@ def get_status():
 @app.route('/api/download/<filename>')
 def download_file(filename):
     """Скачать файл результата"""
+    # Безопасность: проверяем, что filename не содержит путь
+    if '..' in filename or '/' in filename or '\\' in filename:
+        return jsonify({'error': 'Недопустимое имя файла'}), 400
+    
     file_path = os.path.join('results', filename)
     
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        try:
+            return send_file(file_path, as_attachment=True, download_name=filename)
+        except Exception as e:
+            app.logger.error(f"Ошибка при скачивании файла {filename}: {e}")
+            return jsonify({'error': f'Ошибка при скачивании: {str(e)}'}), 500
     else:
+        app.logger.warning(f"Файл не найден: {file_path}")
         return jsonify({'error': 'Файл не найден'}), 404
 
 
@@ -1553,6 +1562,191 @@ def merge_ready_groups():
         app.logger.error(f"❌ Ошибка при объединении файлов: {e}", exc_info=True)
         return jsonify({'success': False, 'message': f'Ошибка: {str(e)}'})
 
+@app.route('/merge_files')
+def merge_files_page():
+    """Страница объединения файлов с удалением дубликатов"""
+    return render_template('merge_files.html')
+
+@app.route('/api/merge_uploaded_files', methods=['POST'])
+def merge_uploaded_files():
+    """Объединить загруженные файлы с удалением дубликатов"""
+    try:
+        if 'files' not in request.files:
+            return jsonify({'success': False, 'message': 'Не выбраны файлы для загрузки'})
+        
+        files = request.files.getlist('files')
+        if not files or all(f.filename == '' for f in files):
+            return jsonify({'success': False, 'message': 'Не выбраны файлы для загрузки'})
+        
+        app.logger.info(f"📋 Получено {len(files)} файлов для объединения")
+        
+        # Сохраняем загруженные файлы временно
+        uploaded_files = []
+        uploads_dir = Path('uploads')
+        uploads_dir.mkdir(exist_ok=True)
+        
+        for file in files:
+            if file.filename and file.filename.endswith(('.xlsx', '.xls')):
+                filename = f"merge_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+                filepath = uploads_dir / filename
+                file.save(str(filepath))
+                uploaded_files.append(filepath)
+                app.logger.info(f"  ✅ Загружен файл: {file.filename}")
+        
+        if not uploaded_files:
+            return jsonify({'success': False, 'message': 'Не удалось загрузить файлы. Проверьте формат (должен быть .xlsx или .xls)'})
+        
+        # Читаем все группы из всех файлов
+        all_groups = []
+        seen_combinations = set()  # Для удаления дубликатов по (ID, username)
+        seen_ids = set()  # Для проверки дубликатов по ID
+        seen_usernames = set()  # Для проверки дубликатов по username
+        
+        total_before = 0
+        duplicates_count = 0
+        
+        for file_path in uploaded_files:
+            try:
+                groups = TelegramSearcher.read_groups_from_excel(str(file_path))
+                total_before += len(groups)
+                
+                for group in groups:
+                    group_id = group.get('id')
+                    username = group.get('username')
+                    username_normalized = username.lower().strip() if username else None
+                    
+                    # Проверяем дубликаты: группа считается дубликатом, если совпадает ID ИЛИ username
+                    duplicate_found = False
+                    
+                    # Проверка по ID
+                    if group_id:
+                        if group_id in seen_ids:
+                            duplicate_found = True
+                    
+                    # Проверка по username (только если не найден дубликат по ID)
+                    if not duplicate_found and username_normalized:
+                        if username_normalized in seen_usernames:
+                            duplicate_found = True
+                    
+                    # Если не дубликат - добавляем в результат и отмечаем как просмотренные
+                    if not duplicate_found:
+                        all_groups.append(group)
+                        
+                        # Добавляем в множества для проверки следующих групп
+                        if group_id:
+                            seen_ids.add(group_id)
+                        if username_normalized:
+                            seen_usernames.add(username_normalized)
+                        if group_id and username_normalized:
+                            seen_combinations.add((group_id, username_normalized))
+                    else:
+                        duplicates_count += 1
+                        app.logger.debug(f"  🔄 Пропущен дубликат: ID={group_id}, username={username}")
+                
+                app.logger.info(f"  ✅ Из {file_path.name}: {len(groups)} групп ({len([g for g in groups if (g.get('id') not in seen_ids or (g.get('username') and g.get('username').lower() not in seen_usernames))])} уникальных)")
+            except Exception as e:
+                app.logger.error(f"  ❌ Ошибка чтения {file_path.name}: {e}")
+        
+        # Удаляем временные файлы
+        for file_path in uploaded_files:
+            try:
+                if file_path.exists():
+                    file_path.unlink()
+            except Exception as e:
+                app.logger.warning(f"Не удалось удалить временный файл {file_path}: {e}")
+        
+        if not all_groups:
+            return jsonify({'success': False, 'message': 'Не удалось прочитать группы из файлов или все группы дубликаты'})
+        
+        # Сохраняем объединенный файл
+        # Убеждаемся, что папка results существует
+        results_dir = Path('results')
+        results_dir.mkdir(exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        result_filename = f'merged_groups_{timestamp}.xlsx'
+        result_file = os.path.join('results', result_filename)
+        
+        # Определяем формат на основе первого файла (обычный или ready_format)
+        # Проверяем наличие полей ready_format
+        has_ready_format = any('check_status' in group or 'check_message' in group for group in all_groups[:5])
+        
+        # Создаем Excel файл
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Merged Groups"
+        
+        if has_ready_format:
+            headers = ['ID', 'Название', 'Username', 'Участников', 'Статус', 'Сообщение', 'Действие', 'Ключевое слово', 'Родительская группа']
+        else:
+            headers = ['ID', 'Название', 'Username', 'Количество участников', 'Ключевое слово']
+        
+        ws.append(headers)
+        
+        header_fill = PatternFill(start_color="667eea", end_color="667eea", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+        
+        for group in all_groups:
+            if has_ready_format:
+                ws.append([
+                    group.get('id', 'N/A'),
+                    group.get('title', 'N/A'),
+                    group.get('username') or 'N/A',
+                    group.get('members_count', 'N/A'),
+                    group.get('check_status', 'N/A'),
+                    group.get('check_message', '') or 'N/A',
+                    group.get('check_action', '') or 'N/A',
+                    group.get('keyword', ''),
+                    group.get('parent_group', 'N/A')
+                ])
+            else:
+                ws.append([
+                    group.get('id', 'N/A'),
+                    group.get('title', 'N/A'),
+                    group.get('username') or 'N/A',
+                    group.get('members_count', 'N/A'),
+                    group.get('keyword', '')
+                ])
+        
+        # Автоматическая ширина колонок
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+        
+        wb.save(result_file)
+        
+        # Проверяем, что файл действительно создан
+        if not os.path.exists(result_file):
+            app.logger.error(f"❌ Файл не был создан: {result_file}")
+            return jsonify({'success': False, 'message': 'Ошибка при сохранении файла'})
+        
+        app.logger.info(f"✅ Объединено {len(uploaded_files)} файлов: было {total_before} групп, стало {len(all_groups)} уникальных (удалено {duplicates_count} дубликатов)")
+        app.logger.info(f"📁 Файл сохранен: {result_file} (размер: {os.path.getsize(result_file)} байт)")
+        
+        return jsonify({
+            'success': True,
+            'result_file': result_filename,
+            'files_count': len(uploaded_files),
+            'total_before': total_before,
+            'total_after': len(all_groups),
+            'duplicates_removed': duplicates_count
+        })
+        
+    except Exception as e:
+        app.logger.error(f"❌ Ошибка при объединении файлов: {e}", exc_info=True)
+        return jsonify({'success': False, 'message': f'Ошибка: {str(e)}'})
 
 # Глобальные переменные для рассылки
 sending_tasks = {}  # session_id -> task info
